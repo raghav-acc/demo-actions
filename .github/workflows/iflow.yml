@@ -31,8 +31,8 @@ jobs:
 
       - name: List iFlows
         run: |
-          curl -s \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Accept: application/json" \
-            "$BTP_HOST/api/v1/IntegrationDesigntimeArtifacts" \
+          curl -v \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Accept: application/json" \
+          "$BTP_HOST/api/v1/IntegrationDesigntimeArtifacts"
             | jq .
