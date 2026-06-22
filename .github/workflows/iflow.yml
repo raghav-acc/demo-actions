@@ -1,0 +1,38 @@
+name: List SAP CPI iFlows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list-iflows:
+    runs-on: ubuntu-latest
+
+    env:
+      BTP_HOST: ${{ secrets.BTP_HOST }}
+      BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
+      BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+
+    steps:
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get OAuth Token
+        id: token
+        run: |
+          TOKEN=$(curl -s \
+            --request POST \
+            "$CPI_HOST/oauth/token" \
+            --user "$BTP_CLIENT_ID:$BTP_CLIENT_SECRET" \
+            --data "grant_type=client_credentials" \
+            | jq -r '.access_token')
+
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: List iFlows
+        run: |
+          curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/json" \
+            "$BTP_HOST/api/v1/IntegrationDesigntimeArtifacts" \
+            | jq .
