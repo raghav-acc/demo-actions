@@ -1,9 +1,15 @@
 name: Gitleaks Scan
 
+on:
+push:
+pull_request:
+workflow_dispatch:
+
 jobs:
-gitleaks:
+scan:
 runs-on: ubuntu-latest
 
+```
 permissions:
   contents: read
   security-events: write
@@ -14,42 +20,15 @@ steps:
     with:
       fetch-depth: 0
 
-  - name: Install Gitleaks
-    run: |
-      GITLEAKS_VERSION=8.24.2
-      wget -q https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
-      tar -xzf gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
-      sudo mv gitleaks /usr/local/bin/
-
-  - name: Scan Repository
-    run: |
-      gitleaks git . \
-        --report-format json \
-        --report-path gitleaks-report.json
-
-  - name: Generate SARIF Report
-    if: always()
-    run: |
-      gitleaks git . \
-        --report-format sarif \
-        --report-path gitleaks-report.sarif || true
-
-  - name: Upload JSON Report
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: gitleaks-json-report
-      path: gitleaks-report.json
-
-  - name: Upload SARIF Report
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: gitleaks-sarif-report
-      path: gitleaks-report.sarif
+  - name: Run Gitleaks
+    uses: gitleaks/gitleaks-action@v2
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
 
   - name: Upload SARIF to GitHub Security
     if: always()
     uses: github/codeql-action/upload-sarif@v3
     with:
-      sarif_file: gitleaks-report.sarif
+      sarif_file: results.sarif
+```
