@@ -22,7 +22,7 @@ jobs:
         run: |
           TOKEN=$(curl -s \
             --request POST \
-            "$CPI_HOST/oauth/token" \
+            "$BTP_HOST/oauth/token" \
             --user "$BTP_CLIENT_ID:$BTP_CLIENT_SECRET" \
             --data "grant_type=client_credentials" \
             | jq -r '.access_token')
