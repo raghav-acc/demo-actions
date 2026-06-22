@@ -1,4 +1,4 @@
-name: List SAP CPI iFlows
+name: List SAP BTP iFlows
 
 on:
   workflow_dispatch:
