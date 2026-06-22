@@ -1,4 +1,4 @@
-name: List SAP BTP iFlows
+name: List SAP Integration Suite iFlows
 
 on:
   workflow_dispatch:
@@ -8,33 +8,51 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      BTP_HOST: ${{ secrets.BTP_HOST }}
-      BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
-      BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+      TOKEN_URL: ${{ secrets.TOKEN_URL }}
+      CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+      IS_HOST: ${{ secrets.IS_HOST }}
 
     steps:
 
       - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
 
       - name: Get OAuth Token
-        id: token
         run: |
+
           TOKEN=$(curl -s \
             --request POST \
-            "$BTP_HOST/oauth/token" \
-            --user "$BTP_CLIENT_ID:$BTP_CLIENT_SECRET" \
+            "$TOKEN_URL" \
+            --user "$CLIENT_ID:$CLIENT_SECRET" \
             --data "grant_type=client_credentials" \
             | jq -r '.access_token')
 
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "Failed to obtain access token"
+            exit 1
+          fi
+
           echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
-      - name: List iFlows
+      - name: Get Integration Artifacts
         run: |
-        RESPONSE=$(curl -s \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/json" \
-  "$BTP_HOST/api/v1/IntegrationDesigntimeArtifacts")
 
-echo "Response:"
-echo "$RESPONSE"
+          curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/json" \
+            "$IS_HOST/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+            -o response.json
+
+          echo "Response received"
+
+          cat response.json
+
+      - name: List iFlow IDs
+        run: |
+
+          echo "Available iFlows"
+
+          jq -r '.d.results[].Id' response.json
