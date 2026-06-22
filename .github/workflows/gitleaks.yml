@@ -9,7 +9,6 @@ jobs:
 gitleaks:
 runs-on: ubuntu-latest
 
-```
 permissions:
   contents: read
   security-events: write
@@ -59,4 +58,3 @@ steps:
     uses: github/codeql-action/upload-sarif@v3
     with:
       sarif_file: gitleaks-report.sarif
-```
