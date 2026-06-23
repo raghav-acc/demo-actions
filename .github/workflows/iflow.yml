@@ -52,7 +52,12 @@ jobs:
 
       - name: List iFlow IDs
         run: |
-
           echo "Available iFlows"
 
-          jq -r '.d.results[].Id' response.json
+    if jq -e '.d.results' response.json > /dev/null; then
+      jq -r '.d.results[] | "\(.Id) | \(.Name) | Version \(.Version)"' response.json
+    else
+      echo "Unexpected SAP API response:"
+      cat response.json
+      exit 1
+    fi
