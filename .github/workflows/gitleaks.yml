@@ -24,7 +24,7 @@ steps:
 
 - script: |
     gitleaks git \
-      --log-opts="-10" \
+      --log-opts="-2" \
       --report-format json \
       --report-path gitleaks-report.json \
       --verbose
