@@ -1,60 +1,295 @@
-name: Download SAP iFlows
+name: Download and Push iFlows
 
 on:
   workflow_dispatch:
 
 jobs:
-  download-iflows:
-    runs-on: ubuntu-latest
+  download-and-push:
+    name: Download and Push iFlows
+    runs-on: windows-latest
 
     env:
-      TOKEN_URL: ${{ secrets.TOKEN_URL }}
-      CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
-      CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
-      CPI_API_URL: ${{ secrets.BTP_AUTH_URL }}
+      IFLOW_AUTH_URL: ${{ secrets.IFLOW_AUTH_URL }}
+      IFLOW_CLIENT_ID: ${{ secrets.IFLOW_CLIENT_ID }}
+      IFLOW_CLIENT_SECRET: ${{ secrets.IFLOW_CLIENT_SECRET }}
+      IFLOW_BASE_URL: ${{ secrets.IFLOW_BASE_URL }}
+
+      ADO_ORG: ${{ secrets.ADO_ORG }}
+      ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
+      ADO_REPO: ${{ secrets.ADO_REPO }}
+      ADO_BRANCH: ${{ secrets.ADO_BRANCH }}
+      ADO_PAT: ${{ secrets.ADO_PAT }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Get OAuth Access Token
-        id: oauth
+      - name: Get IFLOW OAuth Token
+        shell: powershell
         run: |
-          ACCESS_TOKEN=$(curl -s -X POST "$TOKEN_URL" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            -d "client_id=$CLIENT_ID" \
-            -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
+          $body = @{
+            grant_type    = 'client_credentials'
+            client_id     = $env:IFLOW_CLIENT_ID
+            client_secret = $env:IFLOW_CLIENT_SECRET
+          }
 
-          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+          $res = Invoke-RestMethod `
+            -Method Post `
+            -Uri $env:IFLOW_AUTH_URL `
+            -ContentType 'application/x-www-form-urlencoded' `
+            -Body $body `
+            -ErrorAction Stop
 
-      - name: Get list of iFlows
+          if (-not $res.access_token) {
+            throw "No access_token in OAuth response."
+          }
+
+          "IFLOW_TOKEN=$($res.access_token)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: List deployed iFlows in last 12h
+        shell: powershell
         run: |
-          curl -s \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Accept: application/json" \
-            "$CPI_API_URL/api/v1/IntegrationDesigntimeArtifacts" \
-            > iflows.json
+          $Hours = 12
+          $OutFile = "$env:RUNNER_TEMP\recent_iflows.json"
+          $BaseUrl = $env:IFLOW_BASE_URL
+          $Token = $env:IFLOW_TOKEN
 
-          cat iflows.json
+          New-Item -ItemType Directory -Force -Path $env:RUNNER_TEMP | Out-Null
 
-      - name: Download iFlows
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          [Net.ServicePointManager]::CheckCertificateRevocationList = $false
+
+          if (-not $BaseUrl) { throw "IFLOW_BASE_URL missing." }
+          if (-not $Token) { throw "IFLOW_TOKEN missing." }
+
+          if ($Token -notmatch '^Bearer\s+') {
+            $Token = "Bearer $Token"
+          }
+
+          $Headers = @{
+            Authorization = $Token
+            Accept        = 'application/json'
+          }
+
+          function Get-ODataAll([string]$Url) {
+            $all = @()
+
+            while ($Url) {
+              $resp = Invoke-RestMethod -Method GET -Uri $Url -Headers $Headers -ErrorAction Stop
+
+              if ($resp.d.results) {
+                $all += $resp.d.results
+              }
+              elseif ($resp.d) {
+                $all += $resp.d
+              }
+
+              $Url = $resp.d.'__next'
+            }
+
+            return $all
+          }
+
+          $uri = "$BaseUrl/api/v1/IntegrationRuntimeArtifacts?`$format=json"
+          $items = Get-ODataAll $uri
+
+          $cutUtc = (Get-Date).ToUniversalTime().AddHours(-$Hours)
+
+          $recent = foreach ($i in $items) {
+            if ($i.Status -notmatch '^Started$') {
+              continue
+            }
+
+            try {
+              $dt = [datetime]::Parse(
+                $i.DeployedOn,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+              )
+            }
+            catch {
+              continue
+            }
+
+            if ($dt -ge $cutUtc) {
+              [pscustomobject]@{
+                Id         = $i.Id
+                Name       = $i.Name
+                Version    = $i.Version
+                DeployedOn = $dt.ToString('s') + 'Z'
+                Type       = $i.Type
+              }
+            }
+          }
+
+          if (-not $recent) {
+            "[]" | Set-Content -Encoding UTF8 $OutFile
+            exit 0
+          }
+
+          $rows = @($recent | Sort-Object DeployedOn -Descending)
+          $rows | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $OutFile
+
+      - name: Download recent iFlows
+        shell: powershell
         run: |
-          mkdir -p iflows
+          $list = "$env:RUNNER_TEMP\recent_iflows.json"
+          $out = "$env:GITHUB_WORKSPACE\downloads"
 
-          jq -r '.d.results[].Id' iflows.json | while read IFLOW_ID
-          do
-            echo "Downloading $IFLOW_ID"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-            curl -L \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
-              -H "Accept: application/octet-stream" \
-              "$CPI_API_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$IFLOW_ID',Version='active')/\$value" \
-              -o "iflows/${IFLOW_ID}.zip"
-          done
+          $rows = if (Test-Path $list) {
+            @(Get-Content $list -Raw | ConvertFrom-Json)
+          } else {
+            @()
+          }
 
-      - name: Upload downloaded iFlows
+          if (-not $rows -or $rows.Count -eq 0) {
+            Write-Host "No recent iFlows. Skipping downloads."
+            exit 0
+          }
+
+          $Token = $env:IFLOW_TOKEN
+
+          if ($Token -notmatch '^Bearer\s+') {
+            $Token = "Bearer $Token"
+          }
+
+          $Headers = @{
+            Authorization = $Token
+            Accept        = 'application/zip'
+          }
+
+          foreach ($r in $rows) {
+
+            $ArtifactId = $r.Id
+            $Version = $r.Version
+
+            $escapedId = [Uri]::EscapeDataString($ArtifactId)
+
+            $uri = "$($env:IFLOW_BASE_URL)/api/v1/IntegrationDesigntimeArtifacts(Id='$escapedId',Version='$Version')/`$value"
+
+            $safeVersion = "$Version" -replace '[\\/:*?"<>|]', '_'
+            $zipPath = Join-Path $out "$($ArtifactId)_$safeVersion.zip"
+
+            Invoke-WebRequest `
+              -Uri $uri `
+              -Headers $Headers `
+              -OutFile $zipPath `
+              -UseBasicParsing `
+              -ErrorAction Stop
+          }
+
+      - name: Upload Downloaded iFlows
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: sap-iflows
-          path: iflows/*.zip
+          name: downloaded-iflows
+          path: downloads
+
+      - name: Upload Recent iFlow List
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recent-iflow-list
+          path: ${{ runner.temp }}/recent_iflows.json
+
+      - name: Push downloaded ZIPs to Azure Repos
+        shell: powershell
+        run: |
+          $ZipRoot = "$env:GITHUB_WORKSPACE\downloads"
+          $RepoPathRoot = '/IntegrationContent/IntegrationArtefacts'
+
+          if (-not (Test-Path $ZipRoot)) {
+            exit 0
+          }
+
+          $zipFiles = @(Get-ChildItem -Path $ZipRoot -Recurse -Filter *.zip)
+
+          if ($zipFiles.Count -eq 0) {
+            exit 0
+          }
+
+          function Invoke-AdoJson {
+            param(
+              [string]$Method,
+              [string]$Url,
+              $BodyObj = $null
+            )
+
+            $auth = 'Basic ' + [Convert]::ToBase64String(
+              [Text.Encoding]::ASCII.GetBytes("pat:$env:ADO_PAT")
+            )
+
+            $headers = @{
+              Authorization = $auth
+              Accept        = 'application/json'
+            }
+
+            if ($BodyObj -ne $null) {
+              $body = $BodyObj | ConvertTo-Json -Depth 100
+
+              Invoke-RestMethod `
+                -Method $Method `
+                -Uri $Url `
+                -Headers $headers `
+                -ContentType 'application/json' `
+                -Body $body
+            }
+            else {
+              Invoke-RestMethod `
+                -Method $Method `
+                -Uri $Url `
+                -Headers $headers
+            }
+          }
+
+          $Base = "https://dev.azure.com/$env:ADO_ORG/$([uri]::EscapeDataString($env:ADO_PROJECT))/_apis/git/repositories/$([uri]::EscapeDataString($env:ADO_REPO))"
+          $ApiV = "7.0"
+
+          $ref = Invoke-AdoJson `
+            -Method GET `
+            -Url "$Base/refs?filter=heads/$env:ADO_BRANCH&api-version=$ApiV"
+
+          $oldObjectId = $ref.value[0].objectId
+
+          $changes = @()
+
+          foreach ($zip in $zipFiles) {
+
+            $bytes = [IO.File]::ReadAllBytes($zip.FullName)
+            $b64 = [Convert]::ToBase64String($bytes)
+
+            $dest = "$RepoPathRoot/$($zip.Name)"
+
+            $changes += @{
+              changeType = "add"
+              item = @{
+                path = $dest
+              }
+              newContent = @{
+                content = $b64
+                contentType = "base64encoded"
+              }
+            }
+          }
+
+          $pushBody = @{
+            refUpdates = @(
+              @{
+                name = "refs/heads/$env:ADO_BRANCH"
+                oldObjectId = $oldObjectId
+              }
+            )
+            commits = @(
+              @{
+                comment = "Upload IFLOW iFlows $(Get-Date -Format s)"
+                changes = $changes
+              }
+            )
+          }
+
+          Invoke-AdoJson `
+            -Method POST `
+            -Url "$Base/pushes?api-version=$ApiV" `
+            -BodyObj $pushBody
