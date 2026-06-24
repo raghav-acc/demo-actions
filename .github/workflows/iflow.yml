@@ -276,12 +276,10 @@ jobs:
 
       - name: Run Bruno Tests
         run: |
-          mkdir -p bruno-reports
-
-          bru run tests/bruno/iflow-tests \
-          --env dev \
-          --reporter-junit bruno-reports/bruno-junit.xml
-
+            cd tests/bruno/iflow-tests
+            pwd
+            ls -la
+            bru run .
       - name: Upload Bruno Reports
         uses: actions/upload-artifact@v4
         with:
