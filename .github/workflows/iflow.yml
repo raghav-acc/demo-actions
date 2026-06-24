@@ -27,12 +27,3 @@ jobs:
           echo "Response:"
           cat response.json
 
-#      - name: List iFlows
-#        run: |
-#          if jq -e '.d.results' response.json > /dev/null; then
-#            jq -r '.d.results[] | "\(.Id) | \(.Name)"' response.json
-#          else
-#            echo "Connection failed or unexpected response"#
-#            cat response.json
-#            exit 1
-#          fi
