@@ -9,16 +9,10 @@ jobs:
     runs-on: windows-latest
 
     env:
-      IFLOW_AUTH_URL: ${{ secrets.IFLOW_AUTH_URL }}
-      IFLOW_CLIENT_ID: ${{ secrets.IFLOW_CLIENT_ID }}
-      IFLOW_CLIENT_SECRET: ${{ secrets.IFLOW_CLIENT_SECRET }}
-      IFLOW_BASE_URL: ${{ secrets.IFLOW_BASE_URL }}
-
-      ADO_ORG: ${{ secrets.ADO_ORG }}
-      ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
-      ADO_REPO: ${{ secrets.ADO_REPO }}
-      ADO_BRANCH: ${{ secrets.ADO_BRANCH }}
-      ADO_PAT: ${{ secrets.ADO_PAT }}
+      IFLOW_AUTH_URL: ${{ secrets.BTP_AUTH_URL }}
+      IFLOW_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
+      IFLOW_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+      IFLOW_BASE_URL: ${{ secrets.BTP_BASE_URL }}
 
     steps:
       - name: Checkout Repository
@@ -46,10 +40,10 @@ jobs:
 
           "IFLOW_TOKEN=$($res.access_token)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: List deployed iFlows in last 12h
+      - name: List deployed iFlows in last 120h
         shell: powershell
         run: |
-          $Hours = 12
+          $Hours = 120
           $OutFile = "$env:RUNNER_TEMP\recent_iflows.json"
           $BaseUrl = $env:IFLOW_BASE_URL
           $Token = $env:IFLOW_TOKEN
