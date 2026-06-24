@@ -272,7 +272,13 @@ jobs:
           done
 
           [ $FAILED -eq 0 ]
-
+          
+      - name: Verify Bruno Collection
+        run: |
+          if [ ! -f tests/bruno/iflow-tests/bruno.json ]; then
+          echo "bruno.json not found"
+          exit 1
+          fi 
       - name: Run Bruno Tests
         run: |
           mkdir -p bruno-reports
