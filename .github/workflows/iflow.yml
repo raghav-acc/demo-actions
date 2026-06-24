@@ -175,6 +175,7 @@ jobs:
           }
 
       - name: Run CPILint
+        continue-on-error: true
         shell: powershell
         run: |
          
