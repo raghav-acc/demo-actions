@@ -117,11 +117,10 @@ jobs:
         with:
           name: downloaded-iflows
           path: iflows
-
   # =====================================================
-  # JOB 2 - BTPLINT
+  # JOB 2 - CPILINT
   # =====================================================
-  BTPlint-analysis:
+  cpilint-analysis:
     needs: download-iflows
     runs-on: windows-latest
 
@@ -141,19 +140,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Download BTPLint
+      - name: Download CPILint
         shell: powershell
         run: |
 
-          $url = "https://github.com/mwittrock/BTPlint/releases/download/v${env:BTPLINT_VERSION}/BTPlint-${env:BTPLINT_VERSION}.zip"
+          $url = "https://github.com/mwittrock/cpilint/releases/download/v${env:CPILINT_VERSION}/cpilint-${env:CPILINT_VERSION}.zip"
 
           Invoke-WebRequest `
             -Uri $url `
-            -OutFile BTPlint.zip
+            -OutFile cpilint.zip
 
           Expand-Archive `
-            BTPlint.zip `
-            -DestinationPath BTPlint `
+            cpilint.zip `
+            -DestinationPath cpilint `
             -Force
 
       - name: Extract iFlows
@@ -175,43 +174,43 @@ jobs:
               -Force
           }
 
-      - name: Run BTPLint
+      - name: Run CPILint
         shell: powershell
         run: |
 
           New-Item `
             -ItemType Directory `
             -Force `
-            -Path BTPlint-results
+            -Path cpilint-results
 
-          $BTPlintDir = Get-ChildItem BTPlint -Directory | Select-Object -First 1
+          $cpilintDir = Get-ChildItem cpilint -Directory | Select-Object -First 1
 
-          $classpath = "$($BTPlintDir.FullName)\lib\*;$($BTPlintDir.FullName)\logback"
-          $rulesFile = "$($BTPlintDir.FullName)\samples\naming.xml"
+          $classpath = "$($cpilintDir.FullName)\lib\*;$($cpilintDir.FullName)\logback"
+          $rulesFile = "$($cpilintDir.FullName)\samples\naming.xml"
 
           Get-ChildItem temp_iflows -Directory | ForEach-Object {
 
             $iflow = $_.Name
 
-            $cmd = "java -classpath `"$classpath`" org.BTPlint.CliClient -rules `"$rulesFile`" -unpacked-files `"$($_.FullName)`" -boring"
+            $cmd = "java -classpath `"$classpath`" org.cpilint.CliClient -rules `"$rulesFile`" -unpacked-files `"$($_.FullName)`" -boring"
 
             $output = cmd /c $cmd 2>&1
 
             $output | Out-File `
-              "BTPlint-results\$iflow-result.txt"
+              "cpilint-results\$iflow-result.txt"
           }
 
-      - name: Upload BTPLint Results
+      - name: Upload CPILint Results
         uses: actions/upload-artifact@v4
         with:
-          name: BTPlint-results
-          path: BTPlint-results
+          name: cpilint-results
+          path: cpilint-results
 
   # =====================================================
   # JOB 3 - BRUNO
   # =====================================================
   bruno-validation:
-    needs: BTPlint-analysis
+    needs: cpilint-analysis
     runs-on: ubuntu-latest
 
     steps:
