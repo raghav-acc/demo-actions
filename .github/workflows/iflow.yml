@@ -275,14 +275,19 @@ jobs:
 
       - name: Run Bruno Tests
         run: |
-
           mkdir -p bruno-reports
+          COLLECTION_DIR="./tests/bruno/iflow-tests"
+          if [ ! -f "$COLLECTION_DIR/bruno.json" ]; then
+          echo "bruno.json not found in $COLLECTION_DIR"
+          find . -name "bruno.json"
+          exit 1
+          fi
 
-          bru run \
-            --env-file ./tests/bruno/iflow-tests/environments/dev.bru \
-            --reporter-junit bruno-reports/bruno-junit.xml \
-            --reporter-html bruno-reports/bruno-report.html \
-            --reporter-json bruno-reports/bruno-report.json
+          bru run "$COLLECTION_DIR" \
+          --env-file "$COLLECTION_DIR/environments/dev.bru" \
+          --reporter-junit bruno-reports/bruno-junit.xml \
+          --reporter-html bruno-reports/bruno-report.html \
+          --reporter-json bruno-reports/bruno-report.json
 
       - name: Upload Bruno Reports
         uses: actions/upload-artifact@v4
