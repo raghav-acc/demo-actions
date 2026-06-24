@@ -17,13 +17,3 @@ jobs:
 
           echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
-      - name: Test Integration Suite API
-        run: |
-          curl -s \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            "${{ secrets.IS_HOST }}/api/v1/IntegrationDesigntimeArtifacts" \
-            -o response.json
-
-          echo "Response:"
-          cat response.json
-
