@@ -1,19 +1,60 @@
-name: Test SAP Integration Suite Connection
+name: Export SAP Integration Suite iFlows
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-connection:
+  export-iflows:
     runs-on: ubuntu-latest
 
+    env:
+      TOKEN_URL: ${{ secrets.TOKEN_URL }}
+      CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+      CPI_HOST: ${{ secrets.IS_HOST }}
+
     steps:
-      - name: Get OAuth Token
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get OAuth Access Token
         id: token
         run: |
-          ACCESS_TOKEN=$(curl -s -X POST "${{ secrets.TOKEN_URL }}" \
-            -u "${{ secrets.BTP_CLIENT_ID }}:${{ secrets.BTP_CLIENT_SECRET }}" \
-            -d "grant_type=client_credentials" | jq -r '.access_token')
+          ACCESS_TOKEN=$(curl -s -X POST "$TOKEN_URL" \
+            -u "$CLIENT_ID:$CLIENT_SECRET" \
+            -d "grant_type=client_credentials" \
+            | jq -r '.access_token')
 
-          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
 
+      - name: Retrieve iFlows
+        run: |
+          curl -s \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "Accept: application/json" \
+            "$CPI_HOST/api/v1/IntegrationDesigntimeArtifacts?\$filter=Type%20eq%20'INTEGRATION_FLOW'" \
+            > iflows.json
+
+      - name: Display Retrieved iFlows
+        run: |
+          cat iflows.json | jq .
+
+      - name: Extract iFlow Names
+        run: |
+          jq -r '.d.results[] | [.Id,.Name,.Version] | @csv' iflows.json \
+            > iflows.csv
+
+      - name: Upload JSON Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sap-iflows-json
+          path: iflows.json
+
+      - name: Upload CSV Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sap-iflows-csv
+          path: iflows.csv
