@@ -144,7 +144,7 @@ jobs:
         shell: powershell
         run: |
 
-          $url = "https://github.com/mwittrock/cpilint/releases/download/v${env:CPILINT_VERSION}/cpilint-${env:CPILINT_VERSION}.zip"
+          $url = "https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip"
 
           Invoke-WebRequest `
             -Uri $url `
