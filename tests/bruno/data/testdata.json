@@ -1,0 +1,38 @@
+[
+  {
+    "name": "IFFA happy path",
+    "iflowName": "IFFA",
+    "endpoint": "/http/IFFA",
+    "method": "POST",
+    "contentType": "application/json",
+    "payload": {
+      "employeeId": "1001",
+      "action": "CREATE"
+    },
+    "expectedStatus": 200,
+    "expectedText": "success"
+  },
+  {
+    "name": "ITEST happy path",
+    "iflowName": "ITEST",
+    "endpoint": "/http/ITEST",
+    "method": "POST",
+    "contentType": "application/json",
+    "payload": {
+      "orderId": "ORD-12345",
+      "source": "ADO"
+    },
+    "expectedStatus": 200,
+    "expectedText": "processed"
+  },
+  {
+    "name": "IFFA invalid payload",
+    "iflowName": "IFFA",
+    "endpoint": "/http/IFFA",
+    "method": "POST",
+    "contentType": "application/json",
+    "payload": {},
+    "expectedStatus": 400,
+    "expectedText": "error"
+  }
+]
