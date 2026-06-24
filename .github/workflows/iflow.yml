@@ -1,62 +1,38 @@
----
-name: List SAP Integration Suite iFlows
+name: Test SAP Integration Suite Connection
+
 on:
-  workflow_dispatch: null
+  workflow_dispatch:
+
 jobs:
-  list-iflows:
+  test-connection:
     runs-on: ubuntu-latest
-    env:
-      TOKEN_URL: ${{ secrets.TOKEN_URL }}
-      CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
-      CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
-      IS_HOST: ${{ secrets.IS_HOST }}
+
     steps:
-      - name: Install jq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
       - name: Get OAuth Token
+        id: token
         run: |
-          
-          TOKEN=$(curl -s \
-            --request POST \
-            "$TOKEN_URL" \
-            --user "$CLIENT_ID:$CLIENT_SECRET" \
-            --data "grant_type=client_credentials" \
-            | jq -r '.access_token')
+          ACCESS_TOKEN=$(curl -s -X POST "${{ secrets.TOKEN_URL }}" \
+            -u "${{ secrets.BTP_CLIENT_ID }}:${{ secrets.BTP_CLIENT_SECRET }}" \
+            -d "grant_type=client_credentials" | jq -r '.access_token')
 
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "Failed to obtain access token"
-            exit 1
-          fi
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
-          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
-      - name: Get Integration Artifacts
+      - name: Test Integration Suite API
         run: |
-          
           curl -s \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Accept: application/json" \
-            "$IS_HOST/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            "${{ secrets.IS_HOST }}/api/v1/IntegrationDesigntimeArtifacts" \
             -o response.json
 
-          echo "Response received"
-
-          cat response.json
-      - name: List iFlow IDs
-        run: >
-          echo "Available iFlows"
-
-          if jq -e '.d.results' response.json > /dev/null; then
-
-          jq -r '.d.results[] | "\(.Id) | \(.Name) | Version \(.Version)"' response.json
-
-          else
-
-          echo "Unexpected SAP API response:"
-
+          echo "Response:"
           cat response.json
 
-          exit 1
-
-          fi
+#      - name: List iFlows
+#        run: |
+#          if jq -e '.d.results' response.json > /dev/null; then
+#            jq -r '.d.results[] | "\(.Id) | \(.Name)"' response.json
+#          else
+#            echo "Connection failed or unexpected response"#
+#            cat response.json
+#            exit 1
+#          fi
