@@ -25,7 +25,8 @@ jobs:
         run: |
           mkdir -p iflows
           echo "Folder created"
-          ls -la
+          echo "This folder stores downloaded SAP CPI iFlows." > iflows/README.txt
+          ls -la 
 
       - name: Get iFlow list
         run: |
