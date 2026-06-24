@@ -1,62 +1,100 @@
-name: Download SAP CPI iFlows
+name: Download SAP BTP iFlows
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '30 3,15 * * *'
 
 jobs:
   download-iflows:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     env:
-      CPI_HOST: ${{ secrets.CPI_HOST }}
-      CPI_USERNAME: ${{ secrets.CPI_USERNAME }}
-      CPI_PASSWORD: ${{ secrets.CPI_PASSWORD }}
+      BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
+      BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+      BTP_AUTH_URL: ${{ secrets.BTP_AUTH_URL }}
+      BTP_BASE_URL: ${{ secrets.BTP_BASE_URL }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Get OAuth Token
+        shell: powershell
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq zip
+          $body = @{
+            grant_type    = 'client_credentials'
+            client_id     = "${env:BTP_CLIENT_ID}"
+            client_secret = "${env:BTP_CLIENT_SECRET}"
+          }
 
-      - name: Create download folder
-        run: |
-          mkdir -p iflows
-          echo "Folder created"
-          echo "This folder stores downloaded SAP CPI iFlows." > iflows/README.txt
-          ls -la 
-      - name: Commit folder to repo
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add iflows/
-          git commit -m "Add iflows folder" || echo "No changes to commit"
-          git push
-      - name: Get iFlow list
-        run: |
-          curl -s \
-            -u "$CPI_USERNAME:$CPI_PASSWORD" \
-            "https://$CPI_HOST/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
-            > artifacts.json
+          $res = Invoke-RestMethod `
+            -Method Post `
+            -Uri "${env:BTP_AUTH_URL}" `
+            -ContentType "application/x-www-form-urlencoded" `
+            -Body $body
 
-          jq -r '.d.results[].Id' artifacts.json > iflow_ids.txt
+          "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
+
+      - name: List Recent iFlows
+        shell: powershell
+        run: |
+
+          $Hours = 12
+          $OutFile = "recent_iflows.json"
+
+          $headers = @{
+            Authorization = "Bearer $env:BTP_TOKEN"
+            Accept = "application/json"
+          }
+
+          $items = Invoke-RestMethod `
+            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
+            -Headers $headers
+
+          $cutUtc = (Get-Date).ToUniversalTime().AddHours(-$Hours)
+
+          $recent = foreach ($i in $items.d.results) {
+
+            $dt = [datetime]::Parse($i.DeployedOn)
+
+            if ($dt -ge $cutUtc) {
+              [pscustomobject]@{
+                Id = $i.Id
+                Version = $i.Version
+              }
+            }
+          }
+
+          $recent | ConvertTo-Json -Depth 5 | Set-Content $OutFile
 
       - name: Download iFlows
+        shell: powershell
         run: |
-          while read IFLOW_ID; do
-            echo "Downloading $IFLOW_ID"
 
-            curl -L \
-              -u "$CPI_USERNAME:$CPI_PASSWORD" \
-              -o "iflows/${IFLOW_ID}.zip" \
-              "https://$CPI_HOST/api/v1/IntegrationDesigntimeArtifacts(Id='${IFLOW_ID}',Version='active')/\$value"
+          New-Item -ItemType Directory -Force -Path iflows
 
-          done < iflow_ids.txt
+          $rows = Get-Content recent_iflows.json -Raw | ConvertFrom-Json
 
-      - name: Upload downloaded iFlows
+          foreach ($r in $rows) {
+
+            $headers = @{
+              Authorization = "Bearer $env:BTP_TOKEN"
+              Accept = "application/zip"
+            }
+
+            $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
+
+            $zipPath = "iflows\$($r.Id)_$($r.Version).zip"
+
+            Invoke-WebRequest `
+              -Uri $uri `
+              -Headers $headers `
+              -OutFile $zipPath
+          }
+
+      - name: Upload iFlows Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sap-cpi-iflows
+          name: downloaded-iflows
           path: iflows/
