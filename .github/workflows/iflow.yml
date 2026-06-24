@@ -177,29 +177,41 @@ jobs:
       - name: Run CPILint
         shell: powershell
         run: |
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path cpilint-results
-
-          $cpilintDir = Get-ChildItem cpilint -Directory | Select-Object -First 1
-
-          $classpath = "$($cpilintDir.FullName)\lib\*;$($cpilintDir.FullName)\logback"
-          $rulesFile = "$($cpilintDir.FullName)\samples\naming.xml"
-
-          Get-ChildItem temp_iflows -Directory | ForEach-Object {
-
-            $iflow = $_.Name
-
-            $cmd = "java -classpath `"$classpath`" org.cpilint.CliClient -rules `"$rulesFile`" -unpacked-files `"$($_.FullName)`" -boring"
-
-            $output = cmd /c $cmd 2>&1
-
-            $output | Out-File `
-              "cpilint-results\$iflow-result.txt"
+         
+          New-Item -ItemType Directory -Force -Path cpilint-results | Out-Null
+          Write-Host "=== Checking CPILint Directory ==="
+          if (!(Test-Path "cpilint")) {
+          throw "cpilint folder not found"
           }
-
+          Get-ChildItem cpilint -Recurse
+          $cpilintDir = Get-ChildItem cpilint -Directory | Select-Object -First 1
+          if ($null -eq $cpilintDir) {
+          throw "No CPILint installation directory found"
+          }
+           Write-Host "CPILint Dir: $($cpilintDir.FullName)"
+           $classpath = "$($cpilintDir.FullName)\lib\*;$($cpilintDir.FullName)\logback"
+           $rulesFile = "$($cpilintDir.FullName)\samples\naming.xml"
+           Write-Host "Rules File: $rulesFile"
+           if (!(Test-Path $rulesFile)) {
+           throw "Rules file not found"
+           }
+             Write-Host "=== Java Version ==="
+             java -version
+             if (!(Test-Path "temp_iflows")) {
+            throw "temp_iflows directory not found"
+            }
+            $iflows = Get-ChildItem temp_iflows -Directory
+            Write-Host "Found $($iflows.Count) extracted iFlows"
+            foreach ($dir in $iflows) {
+            $iflow = $dir.Name
+            Write-Host "Analyzing $iflow"
+            $cmd = "java -classpath `"$classpath`" org.cpilint.CliClient -rules `"$rulesFile`" -unpacked-files `"$($dir.FullName)`" -boring"
+            Write-Host $cmd
+            $output = cmd /c $cmd 2>&1
+            $output | Tee-Object -FilePath "cpilint-results\$iflow-result.txt"
+            Write-Host "Finished $iflow"
+            } 
+    
       - name: Upload CPILint Results
         uses: actions/upload-artifact@v4
         with:
