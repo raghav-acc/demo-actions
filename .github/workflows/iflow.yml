@@ -1,28 +1,23 @@
+---
 name: List SAP Integration Suite iFlows
-
 on:
-  workflow_dispatch:
-
+  workflow_dispatch: null
 jobs:
   list-iflows:
     runs-on: ubuntu-latest
-
     env:
       TOKEN_URL: ${{ secrets.TOKEN_URL }}
       CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
       IS_HOST: ${{ secrets.IS_HOST }}
-
     steps:
-
       - name: Install jq
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-
       - name: Get OAuth Token
         run: |
-
+          
           TOKEN=$(curl -s \
             --request POST \
             "$TOKEN_URL" \
@@ -36,10 +31,9 @@ jobs:
           fi
 
           echo "TOKEN=$TOKEN" >> $GITHUB_ENV
-
       - name: Get Integration Artifacts
         run: |
-
+          
           curl -s \
             -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/json" \
@@ -49,15 +43,20 @@ jobs:
           echo "Response received"
 
           cat response.json
-
       - name: List iFlow IDs
-        run: |
+        run: >
           echo "Available iFlows"
 
-    if jq -e '.d.results' response.json > /dev/null; then
-      jq -r '.d.results[] | "\(.Id) | \(.Name) | Version \(.Version)"' response.json
-    else
-      echo "Unexpected SAP API response:"
-      cat response.json
-      exit 1
-    fi
+          if jq -e '.d.results' response.json > /dev/null; then
+
+          jq -r '.d.results[] | "\(.Id) | \(.Name) | Version \(.Version)"' response.json
+
+          else
+
+          echo "Unexpected SAP API response:"
+
+          cat response.json
+
+          exit 1
+
+          fi
