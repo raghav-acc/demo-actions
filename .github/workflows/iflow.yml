@@ -1,108 +1,118 @@
----
-name: IFLOW's DOWNLOAD AND TEST USING CPILINT & BRUNO PIPELINE
+name: Download iFlows to Repo
+
 on:
-  workflow_dispatch: null
+workflow_dispatch:
+
 jobs:
-  download-iflows:
-    runs-on: windows-latest
-    env:
-      BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
-      BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
-      BTP_AUTH_URL: ${{ secrets.BTP_AUTH_URL }}
-      BTP_BASE_URL: ${{ secrets.BTP_BASE_URL }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Get OAuth Token
-        shell: powershell
-        run: |
-          $body = @{
-          grant_type    = 'client_credentials'
-          client_id     = "${env:BTP_CLIENT_ID}"
-          client_secret = "${env:BTP_CLIENT_SECRET}"
+download-iflows:
+runs-on: windows-latest
+
+```
+env:
+  BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
+  BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+  BTP_AUTH_URL: ${{ secrets.BTP_AUTH_URL }}
+  BTP_BASE_URL: ${{ secrets.BTP_BASE_URL }}
+
+steps:
+  - name: Checkout Repository
+    uses: actions/checkout@v4
+
+  - name: Get OAuth Token
+    shell: powershell
+    run: |
+      $body = @{
+        grant_type    = 'client_credentials'
+        client_id     = "${env:BTP_CLIENT_ID}"
+        client_secret = "${env:BTP_CLIENT_SECRET}"
+      }
+
+      $res = Invoke-RestMethod `
+        -Method Post `
+        -Uri "${env:BTP_AUTH_URL}" `
+        -ContentType "application/x-www-form-urlencoded" `
+        -Body $body
+
+      "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
+
+  - name: List Recent iFlows
+    shell: powershell
+    run: |
+      $Hours = 12
+      $OutFile = "recent_iflows.json"
+
+      $headers = @{
+        Authorization = "Bearer $env:BTP_TOKEN"
+        Accept        = "application/json"
+      }
+
+      $items = Invoke-RestMethod `
+        -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
+        -Headers $headers
+
+      $cutUtc = (Get-Date).ToUniversalTime().AddHours(-$Hours)
+
+      $recent = foreach ($i in $items.d.results) {
+
+        if ($i.Status -ne "Started") { continue }
+
+        try {
+          $dt = [datetime]::Parse($i.DeployedOn)
+        }
+        catch {
+          continue
+        }
+
+        if ($dt -ge $cutUtc) {
+          [pscustomobject]@{
+            Id      = $i.Id
+            Version = $i.Version
           }
-          $res = Invoke-RestMethod `
-          -Method Post `
-          -Uri "${env:BTP_AUTH_URL}" `
-          -ContentType "application/x-www-form-urlencoded" `
-          -Body $body
-          "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
-      - name: List iFlows with Tag 'Ready for Deployment'
-        shell: powershell
-        run: |
-          $OutFile = "deployment_iflows.json"
-          $RequiredTag = "ready for deployment"
-          $headers = @{
-            Authorization = "Bearer $env:BTP_TOKEN"
-            Accept = "application/json"
-          }
-          # Get all design-time iFlows
-          $artifacts = Invoke-RestMethod `
-            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
-            -Headers $headers
-          $selected = @()
-          foreach ($artifact in $artifacts.d.results) {
-            try {
-              $id = $artifact.Id
-              $version = $artifact.Version
-              Write-Host "Checking tags for $id"
-              # Read artifact details including tags
-              $detailUri = "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts(Id='$id',Version='$version')?`$expand=Tags&`$format=json"
-              $details = Invoke-RestMethod `
-                -Uri $detailUri `
-                -Headers $headers
+        }
+      }
 
-              $hasTag = $false
+      $recent | ConvertTo-Json -Depth 5 | Set-Content $OutFile
 
-              if ($details.d.Tags.results) {
-                foreach ($tag in $details.d.Tags.results) {
-                  if ($tag.Name -eq $RequiredTag) {
-                    $hasTag = $true
-                    break
-                  }
-                }
-              }
+  - name: Download iFlows
+    shell: powershell
+    run: |
+      New-Item -ItemType Directory -Force -Path iflow
 
-              if ($hasTag) {
-                Write-Host "Found tagged iFlow: $id"
+      $rows = Get-Content recent_iflows.json -Raw | ConvertFrom-Json
 
-                $selected += [pscustomobject]@{
-                  Id      = $id
-                  Version = $version
-                }
-              }
+      foreach ($r in $rows) {
 
-            }
-            catch {
-              Write-Warning "Failed to read tags for $($artifact.Id)"
-            }
-          }
+        $headers = @{
+          Authorization = "Bearer $env:BTP_TOKEN"
+          Accept        = "application/zip"
+        }
 
+        $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
 
-          $selected | ConvertTo-Json -Depth 5 | Set-Content $OutFile
-      - name: Download iFlows
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path iflows
-          if (!(Test-Path "deployment_iflows.json")) {
-            throw "deployment_iflows.json not found"
-          }
-          $rows = Get-Content deployment_iflows.json -Raw | ConvertFrom-Json
-          foreach ($r in $rows) {
-            $headers = @{
-              Authorization = "Bearer $env:BTP_TOKEN"
-              Accept = "application/zip"
-            }
-            $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
-            $zip = "iflows\$($r.Id)_$($r.Version).zip"
-            Write-Host "Downloading $($r.Id)"
-            Invoke-WebRequest `
-              -Uri $uri `
-              -Headers $headers `
-              -OutFile $zip
-          }
-      - name: Upload iFlows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: downloaded-iflows
-          path: iflows
+        $zip = "iflow\$($r.Id)_$($r.Version).zip"
+
+        Write-Host "Downloading $($r.Id)"
+
+        Invoke-WebRequest `
+          -Uri $uri `
+          -Headers $headers `
+          -OutFile $zip
+      }
+
+  - name: Commit Downloaded iFlows
+    shell: powershell
+    run: |
+      git config user.name "github-actions[bot]"
+      git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      git add iflow/
+
+      git diff --staged --quiet
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "No changes to commit"
+        exit 0
+      }
+
+      git commit -m "Downloaded latest iFlows"
+      git push
+```
