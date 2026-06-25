@@ -1,12 +1,7 @@
-name: BTP Quality Pipeline
+name: IFLOW's DOWNLOAD AND TEST USING CPILINT & BRUNO PIPELINE
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '30 3,15 * * *'
-
-env:
-  BTPLINT_VERSION: "1.1.0"
 
 jobs:
 
@@ -118,7 +113,7 @@ jobs:
           name: downloaded-iflows
           path: iflows
   # =====================================================
-  # JOB 2 - CPILINT
+  # JOB 2 - CPILINT TESTING
   # =====================================================
   cpilint-analysis:
     needs: download-iflows
@@ -220,7 +215,7 @@ jobs:
           path: cpilint-results
 
   # =====================================================
-  # JOB 3 - BRUNO
+  # JOB 3 - BRUNO TESTING
   # =====================================================
   bruno-validation:
     needs: cpilint-analysis
