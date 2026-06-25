@@ -29,7 +29,7 @@ jobs:
           "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
       - name: List iFlows with Tag 'Ready for Deployment'
         shell: powershell
-        run: >
+        run: |
           $OutFile = "deployment_iflows.json"
           $RequiredTag = "ready for deployment"
           $headers = @{
@@ -82,7 +82,7 @@ jobs:
           $selected | ConvertTo-Json -Depth 5 | Set-Content $OutFile
       - name: Download iFlows
         shell: powershell
-        run: >
+        run: |
           
           New-Item -ItemType Directory -Force -Path iflows
 
