@@ -95,7 +95,7 @@ jobs:
         shell: powershell
         run: |
           Get-ChildItem iflow | Out-File workflow-log.txt
-      - name: Send Email
+      - name: Send Workflow Status Email
         if: always()
         uses: dawidd6/action-send-mail@v3
         with:
@@ -104,13 +104,12 @@ jobs:
           secure: true
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "iFlow Download Workflow Result"
+          subject: "SAP CPI iFlow Download - ${{ job.status }}"
           to: ${{ secrets.EMAIL_TO }}
           from: GitHub Actions
           body: |
-            Workflow completed.
+            Status: ${{ job.status }}
             Repository: ${{ github.repository }}
-            Run Number: ${{ github.run_number }}
-            Status: Success
-            Check attached log file.
-            attachments: workflow-log.txt
+            Workflow: ${{ github.workflow }}
+            View complete logs:
+            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
