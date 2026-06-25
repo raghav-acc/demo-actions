@@ -1,12 +1,7 @@
 name: Gitleaks Scan
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-  workflow_dispatch:
+ workflow_dispatch:
 
 jobs:
   gitleaks:
