@@ -30,39 +30,24 @@ jobs:
       - name: List iFlows with Tag 'Ready for Deployment'
         shell: powershell
         run: >
-          
           $OutFile = "deployment_iflows.json"
-
           $RequiredTag = "ready for deployment"
-
-
           $headers = @{
             Authorization = "Bearer $env:BTP_TOKEN"
             Accept = "application/json"
           }
-
-
           # Get all design-time iFlows
-
           $artifacts = Invoke-RestMethod `
-            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts?`$format=json" `
+            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
             -Headers $headers
-
           $selected = @()
-
-
           foreach ($artifact in $artifacts.d.results) {
-
             try {
-
               $id = $artifact.Id
               $version = $artifact.Version
-
               Write-Host "Checking tags for $id"
-
               # Read artifact details including tags
-              $detailUri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$id',Version='$version')?`$expand=Tags&`$format=json"
-
+              $detailUri = "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts(Id='$id',Version='$version')?`$expand=Tags&`$format=json"
               $details = Invoke-RestMethod `
                 -Uri $detailUri `
                 -Headers $headers
