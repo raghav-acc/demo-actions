@@ -33,7 +33,7 @@ jobs:
           
           $OutFile = "deployment_iflows.json"
 
-          $RequiredTag = "Ready for Deployment"
+          $RequiredTag = "ready for deployment"
 
 
           $headers = @{
