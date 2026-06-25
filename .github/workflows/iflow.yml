@@ -83,31 +83,19 @@ jobs:
       - name: Download iFlows
         shell: powershell
         run: |
-          
           New-Item -ItemType Directory -Force -Path iflows
-
-
-          if (!(Test-Path "recent_iflows.json")) {
-            throw "recent_iflows.json not found"
+          if (!(Test-Path "deployment_iflows.json")) {
+            throw "deployment_iflows.json not found"
           }
-
-
-          $rows = Get-Content recent_iflows.json -Raw | ConvertFrom-Json
-
-
+          $rows = Get-Content deployment_iflows.json -Raw | ConvertFrom-Json
           foreach ($r in $rows) {
-
             $headers = @{
               Authorization = "Bearer $env:BTP_TOKEN"
               Accept = "application/zip"
             }
-
             $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
-
             $zip = "iflows\$($r.Id)_$($r.Version).zip"
-
             Write-Host "Downloading $($r.Id)"
-
             Invoke-WebRequest `
               -Uri $uri `
               -Headers $headers `
