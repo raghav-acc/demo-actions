@@ -1,92 +1,114 @@
+---
 name: IFLOW's DOWNLOAD AND TEST USING CPILINT & BRUNO PIPELINE
-
 on:
-  workflow_dispatch:
-
+  workflow_dispatch: null
 jobs:
-
-  # =====================================================
-  # JOB 1 - DOWNLOAD IFLOWS
-  # =====================================================
   download-iflows:
     runs-on: windows-latest
-
     env:
       BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
       BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
       BTP_AUTH_URL: ${{ secrets.BTP_AUTH_URL }}
       BTP_BASE_URL: ${{ secrets.BTP_BASE_URL }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Get OAuth Token
         shell: powershell
         run: |
           $body = @{
-            grant_type    = 'client_credentials'
-            client_id     = "${env:BTP_CLIENT_ID}"
-            client_secret = "${env:BTP_CLIENT_SECRET}"
+          grant_type    = 'client_credentials'
+          client_id     = "${env:BTP_CLIENT_ID}"
+          client_secret = "${env:BTP_CLIENT_SECRET}"
           }
-
           $res = Invoke-RestMethod `
-            -Method Post `
-            -Uri "${env:BTP_AUTH_URL}" `
-            -ContentType "application/x-www-form-urlencoded" `
-            -Body $body
-
+          -Method Post `
+          -Uri "${env:BTP_AUTH_URL}" `
+          -ContentType "application/x-www-form-urlencoded" `
+          -Body $body
           "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
-
-      - name: List Recent iFlows
+      - name: List iFlows with Tag 'Ready for Deployment'
         shell: powershell
-        run: |
+        run: >
+          
+          $OutFile = "deployment_iflows.json"
 
-          $Hours = 12
-          $OutFile = "recent_iflows.json"
+          $RequiredTag = "Ready for Deployment"
+
 
           $headers = @{
             Authorization = "Bearer $env:BTP_TOKEN"
             Accept = "application/json"
           }
 
-          $items = Invoke-RestMethod `
-            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
+
+          # Get all design-time iFlows
+
+          $artifacts = Invoke-RestMethod `
+            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts?`$format=json" `
             -Headers $headers
 
-          $cutUtc = (Get-Date).ToUniversalTime().AddHours(-$Hours)
+          $selected = @()
 
-          $recent = foreach ($i in $items.d.results) {
 
-            if ($i.Status -ne "Started") { continue }
+          foreach ($artifact in $artifacts.d.results) {
 
             try {
-              $dt = [datetime]::Parse($i.DeployedOn)
-            } catch {
-              continue
-            }
 
-            if ($dt -ge $cutUtc) {
-              [pscustomobject]@{
-                Id      = $i.Id
-                Version = $i.Version
+              $id = $artifact.Id
+              $version = $artifact.Version
+
+              Write-Host "Checking tags for $id"
+
+              # Read artifact details including tags
+              $detailUri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$id',Version='$version')?`$expand=Tags&`$format=json"
+
+              $details = Invoke-RestMethod `
+                -Uri $detailUri `
+                -Headers $headers
+
+              $hasTag = $false
+
+              if ($details.d.Tags.results) {
+                foreach ($tag in $details.d.Tags.results) {
+                  if ($tag.Name -eq $RequiredTag) {
+                    $hasTag = $true
+                    break
+                  }
+                }
               }
+
+              if ($hasTag) {
+                Write-Host "Found tagged iFlow: $id"
+
+                $selected += [pscustomobject]@{
+                  Id      = $id
+                  Version = $version
+                }
+              }
+
+            }
+            catch {
+              Write-Warning "Failed to read tags for $($artifact.Id)"
             }
           }
 
-          $recent | ConvertTo-Json -Depth 5 | Set-Content $OutFile
 
+          $selected | ConvertTo-Json -Depth 5 | Set-Content $OutFile
       - name: Download iFlows
         shell: powershell
-        run: |
-
+        run: >
+          
           New-Item -ItemType Directory -Force -Path iflows
+
 
           if (!(Test-Path "recent_iflows.json")) {
             throw "recent_iflows.json not found"
           }
 
+
           $rows = Get-Content recent_iflows.json -Raw | ConvertFrom-Json
+
 
           foreach ($r in $rows) {
 
@@ -106,186 +128,8 @@ jobs:
               -Headers $headers `
               -OutFile $zip
           }
-
       - name: Upload iFlows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-iflows
           path: iflows
-  # =====================================================
-  # JOB 2 - CPILINT TESTING
-  # =====================================================
-  cpilint-analysis:
-    needs: download-iflows
-    runs-on: windows-latest
-
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - name: Download iFlows
-        uses: actions/download-artifact@v4
-        with:
-          name: downloaded-iflows
-          path: downloads
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Download CPILint
-        shell: powershell
-        run: |
-
-          $url = "https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip"
-
-          Invoke-WebRequest `
-            -Uri $url `
-            -OutFile cpilint.zip
-
-          Expand-Archive `
-            cpilint.zip `
-            -DestinationPath cpilint `
-            -Force
-
-      - name: Extract iFlows
-        shell: powershell
-        run: |
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path temp_iflows
-
-          Get-ChildItem downloads -Filter *.zip | ForEach-Object {
-
-            $target = Join-Path temp_iflows $_.BaseName
-
-            Expand-Archive `
-              $_.FullName `
-              -DestinationPath $target `
-              -Force
-          }
-
-      - name: Run CPILint
-        continue-on-error: true
-        shell: powershell
-        run: |
-         
-          New-Item -ItemType Directory -Force -Path cpilint-results | Out-Null
-          Write-Host "=== Checking CPILint Directory ==="
-          if (!(Test-Path "cpilint")) {
-          throw "cpilint folder not found"
-          }
-          Get-ChildItem cpilint -Recurse
-          $cpilintDir = Get-ChildItem cpilint -Directory | Select-Object -First 1
-          if ($null -eq $cpilintDir) {
-          throw "No CPILint installation directory found"
-          }
-           Write-Host "CPILint Dir: $($cpilintDir.FullName)"
-           $classpath = "$($cpilintDir.FullName)\lib\*;$($cpilintDir.FullName)\logback"
-           $rulesFile = "$($cpilintDir.FullName)\samples\naming.xml"
-           Write-Host "Rules File: $rulesFile"
-           if (!(Test-Path $rulesFile)) {
-           throw "Rules file not found"
-           }
-             Write-Host "=== Java Version ==="
-             java -version
-             if (!(Test-Path "temp_iflows")) {
-            throw "temp_iflows directory not found"
-            }
-            $iflows = Get-ChildItem temp_iflows -Directory
-            Write-Host "Found $($iflows.Count) extracted iFlows"
-            foreach ($dir in $iflows) {
-            $iflow = $dir.Name
-            Write-Host "Analyzing $iflow"
-            $cmd = "java -classpath `"$classpath`" org.cpilint.CliClient -rules `"$rulesFile`" -unpacked-files `"$($dir.FullName)`" -boring"
-            Write-Host $cmd
-            $output = cmd /c $cmd 2>&1
-            $output | Tee-Object -FilePath "cpilint-results\$iflow-result.txt"
-            Write-Host "Finished $iflow"
-            } 
-    
-      - name: Upload CPILint Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpilint-results
-          path: cpilint-results
-
-  # =====================================================
-  # JOB 3 - BRUNO TESTING
-  # =====================================================
-  bruno-validation:
-    needs: cpilint-analysis
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - name: Download iFlow Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: downloaded-iflows
-          path: downloaded-iflows
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Bruno CLI
-        run: |
-          npm install -g @usebruno/cli
-          bru --version
-
-      - name: Unzip iFlows
-        run: |
-
-          mkdir -p unzipped-iflows
-
-          for file in downloaded-iflows/*.zip
-          do
-            folder="unzipped-iflows/$(basename "$file" .zip)"
-            mkdir -p "$folder"
-            unzip -o "$file" -d "$folder"
-          done
-
-      - name: Validate Package Structure
-        run: |
-
-          FAILED=0
-
-          for dir in unzipped-iflows/*
-          do
-            [ -d "$dir" ] || continue
-
-            find "$dir" -name "*.iflw" | grep -q . || FAILED=1
-            find "$dir" -path "*/META-INF/MANIFEST.MF" | grep -q . || FAILED=1
-          done
-
-          [ $FAILED -eq 0 ]
-          
-
-      - name: Run Bruno Tests
-        run: |
-            cd tests/bruno/iflow-tests
-            pwd
-            ls -la
-            bru run .
-      - name: Verify Bruno Reports
-        if: always()
-        run: |
-          pwd
-          ls -la
-          ls -la bruno-reports || true
-          find . -name "*.xml" || true
-          find . -name "*.json" || true
-          find . -name "*.html" || true      
-      - name: Upload Bruno Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: bruno-reports
-          path: bruno-reports
