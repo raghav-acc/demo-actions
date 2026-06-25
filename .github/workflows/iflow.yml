@@ -96,6 +96,7 @@ jobs:
         run: |
           Get-ChildItem iflow | Out-File workflow-log.txt
       - name: Send Email
+        if: always()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
