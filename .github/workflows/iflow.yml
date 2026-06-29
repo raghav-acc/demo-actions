@@ -90,26 +90,3 @@ jobs:
           }
           git commit -m "Downloaded latest iFlows"
           git push
-
-      - name: Save Workflow Log
-        shell: powershell
-        run: |
-          Get-ChildItem iflow | Out-File workflow-log.txt
-      - name: Send Workflow Status Email
-        if: always()
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "SAP CPI iFlow Download - ${{ job.status }}"
-          to: ${{ secrets.EMAIL_TO }}
-          from: GitHub Actions
-          body: |
-            Status: ${{ job.status }}
-            Repository: ${{ github.repository }}
-            Workflow: ${{ github.workflow }}
-            View complete logs:
-            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
