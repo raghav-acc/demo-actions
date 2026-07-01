@@ -84,7 +84,7 @@ jobs:
           $ready | ConvertTo-Json -Depth 5 | Set-Content $OutFile
 
 
-       - name: Download ReadyForDeployment iFlows
+      - name: Download ReadyForDeployment iFlows
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path iflow
