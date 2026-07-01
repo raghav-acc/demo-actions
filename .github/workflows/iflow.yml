@@ -30,7 +30,7 @@ jobs:
       - name: List Recent iFlows
         shell: powershell
         run: |
-          $Hours = 12
+          $Hours = 1200
           $OutFile = "recent_iflows.json"
           $headers = @{
           Authorization = "Bearer $env:BTP_TOKEN"
