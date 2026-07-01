@@ -27,89 +27,53 @@ jobs:
             -ContentType "application/x-www-form-urlencoded" `
             -Body $body
             "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
-      - name: List ReadyForDeployment iFlows
+      - name: List Recent iFlows
         shell: powershell
         run: |
+          $Hours = 1200
+          $OutFile = "recent_iflows.json"
           $headers = @{
-            Authorization = "Bearer $env:BTP_TOKEN"
-            Accept        = "application/json"
+          Authorization = "Bearer $env:BTP_TOKEN"
+          Accept        = "application/json"
           }
-
-          $OutFile = "ready_iflows.json"
-
-          # Get all design-time artifacts
-          $artifacts = Invoke-RestMethod `
-            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts?`$format=json" `
-            -Headers $headers
-
-          $ready = @()
-
-          foreach ($artifact in $artifacts.d.results) {
-
-            $id = $artifact.Id
-            $version = $artifact.Version
-
-            Write-Host "Checking tags for $id"
-
-            try {
-
-              $detail = Invoke-RestMethod `
-                -Uri "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$id',Version='$version')?`$expand=Tags&`$format=json" `
-                -Headers $headers
-
-              $tags = @()
-
-              if ($detail.d.Tags.results) {
-                $tags = $detail.d.Tags.results.Name
-              }
-
-              if ($tags -contains "ready for deployment") {
-
-                $ready += [PSCustomObject]@{
-                  Id      = $id
-                  Version = $version
-                }
-
-                Write-Host "Found ReadyForDeployment: $id"
-
-              }
-
-            }
-            catch {
-              Write-Warning "Failed to read tags for $id"
-            }
-
+          $items = Invoke-RestMethod `
+          -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
+          -Headers $headers
+          $cutUtc = (Get-Date).ToUniversalTime().AddHours(-$Hours)
+          $recent = foreach ($i in $items.d.results) {
+          if ($i.Status -ne "Started") { continue }
+          try {
+          $dt = [datetime]::Parse($i.DeployedOn)
           }
-
-          $ready | ConvertTo-Json -Depth 5 | Set-Content $OutFile
-
-
-      - name: Download ReadyForDeployment iFlows
+          catch {
+          continue
+          }
+          if ($dt -ge $cutUtc) {
+          [pscustomobject]@{
+            Id      = $i.Id
+            Version = $i.Version
+          }
+          }
+          }
+          $recent | ConvertTo-Json -Depth 5 | Set-Content $OutFile
+      - name: Download iFlows
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path iflow
-
-          $rows = Get-Content ready_iflows.json -Raw | ConvertFrom-Json
-
+          $rows = Get-Content recent_iflows.json -Raw | ConvertFrom-Json
           foreach ($r in $rows) {
-
-            Write-Host "Downloading $($r.Id)"
-
-            $headers = @{
-              Authorization = "Bearer $env:BTP_TOKEN"
-              Accept        = "application/zip"
-            }
-
-            $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
-
-            $zip = "iflow\$($r.Id)_$($r.Version).zip"
-
-            Invoke-WebRequest `
-              -Uri $uri `
-              -Headers $headers `
-              -OutFile $zip
+          $headers = @{
+          Authorization = "Bearer $env:BTP_TOKEN"
+          Accept        = "application/zip"
           }
-
+          $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
+          $zip = "iflow\$($r.Id)_$($r.Version).zip"
+          Write-Host "Downloading $($r.Id)"
+          Invoke-WebRequest `
+          -Uri $uri `
+          -Headers $headers `
+          -OutFile $zip
+            }
       - name: Commit Downloaded iFlows
         shell: powershell
         run: |
