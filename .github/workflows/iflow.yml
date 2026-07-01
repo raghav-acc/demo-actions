@@ -63,7 +63,7 @@ jobs:
                 $tags = $detail.d.Tags.results.Name
               }
 
-              if ($tags -contains "ReadyForDeployment") {
+              if ($tags -contains "ready for deployment") {
 
                 $ready += [PSCustomObject]@{
                   Id      = $id
