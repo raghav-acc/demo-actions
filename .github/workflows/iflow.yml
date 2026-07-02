@@ -9,25 +9,22 @@ on:
         default: "feature/btp-iflow-backup"
 
   schedule:
-    # Runs twice daily at 09:00 IST and 18:00 IST
-    # GitHub cron runs in UTC
+    # Runs daily at 09:00 IST and 18:00 IST (03:30 & 12:30 UTC)
     - cron: "30 3,12 * * *"
 
 permissions:
   contents: write
 
 env:
-  TARGET_BRANCH: feature/btp-iflow-backup
   DEPLOYMENT_MARKER: ReadyForDeployment
   DOWNLOAD_DIR: btp-iflows
   EXTRACT_ZIP: "true"
+  TARGET_BRANCH: feature/btp-iflow-backup
 
 jobs:
   download-ready-iflows:
-    name: Download X.Y.Z.ReadyForDeployment iFlows from SAP CPI
+    name: Download ReadyForDeployment iFlows
     runs-on: ubuntu-latest
-
-    # Keep this only if secrets are stored under GitHub Environment secrets.
     environment: dev
 
     steps:
@@ -36,24 +33,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve runtime inputs
+      - name: Resolve runtime configuration
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          TARGET_BRANCH_VALUE="${TARGET_BRANCH}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.target_branch }}" ]]; then
             TARGET_BRANCH_VALUE="${{ github.event.inputs.target_branch }}"
-          else
-            TARGET_BRANCH_VALUE="$TARGET_BRANCH"
           fi
 
-          echo "TARGET_BRANCH=$TARGET_BRANCH_VALUE" >> "$GITHUB_ENV"
+          echo "TARGET_BRANCH=${TARGET_BRANCH_VALUE}" >> "$GITHUB_ENV"
 
-          echo "Target branch resolved: $TARGET_BRANCH_VALUE"
-          echo "Deployment marker    : $DEPLOYMENT_MARKER"
-          echo "Filter mode          : CASE-SENSITIVE"
+          echo "::group::Runtime Configuration"
+          echo "Target Branch      : ${TARGET_BRANCH_VALUE}"
+          echo "Deployment Marker  : ${DEPLOYMENT_MARKER}"
+          echo "Download Directory : ${DOWNLOAD_DIR}"
+          echo "Extract ZIP        : ${EXTRACT_ZIP}"
+          echo "::endgroup::"
 
-      - name: Validate required GitHub secrets
+      - name: Validate SAP BTP configuration
         shell: bash
         env:
           SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
@@ -61,46 +61,45 @@ jobs:
           SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
           SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          echo "Validating required secrets..."
+          echo "::group::Validating Required Secrets"
 
-          if [ -z "${SAP_BTP_TOKEN_URL:-}" ]; then
-            echo "ERROR: SAP_BTP_TOKEN_URL secret is missing or empty."
-            exit 1
-          fi
+          required_vars=(
+            SAP_BTP_TOKEN_URL
+            SAP_BTP_OAUTH_CLIENT_ID
+            SAP_BTP_OAUTH_CLIENT_SECRET
+            SAP_CPI_API_BASE_URL
+          )
 
-          if [ -z "${SAP_BTP_OAUTH_CLIENT_ID:-}" ]; then
-            echo "ERROR: SAP_BTP_OAUTH_CLIENT_ID secret is missing or empty."
-            exit 1
-          fi
+          for var in "${required_vars[@]}"; do
+            if [[ -z "${!var:-}" ]]; then
+              echo "::error::Required secret '${var}' is missing or empty."
+              exit 1
+            fi
+          done
 
-          if [ -z "${SAP_BTP_OAUTH_CLIENT_SECRET:-}" ]; then
-            echo "ERROR: SAP_BTP_OAUTH_CLIENT_SECRET secret is missing or empty."
-            exit 1
-          fi
+          url_vars=(
+            SAP_BTP_TOKEN_URL
+            SAP_CPI_API_BASE_URL
+          )
 
-          if [ -z "${SAP_CPI_API_BASE_URL:-}" ]; then
-            echo "ERROR: SAP_CPI_API_BASE_URL secret is missing or empty."
-            exit 1
-          fi
+          for var in "${url_vars[@]}"; do
+            if [[ ! "${!var}" =~ ^https:// ]]; then
+              echo "::error::${var} must start with https://"
+              exit 1
+            fi
+          done
 
-          if [ "${SAP_BTP_TOKEN_URL#https://}" = "$SAP_BTP_TOKEN_URL" ]; then
-            echo "ERROR: SAP_BTP_TOKEN_URL must start with https://"
-            exit 1
-          fi
-
-          if [ "${SAP_CPI_API_BASE_URL#https://}" = "$SAP_CPI_API_BASE_URL" ]; then
-            echo "ERROR: SAP_CPI_API_BASE_URL must start with https://"
-            exit 1
-          fi
-
-          echo "All required secrets are configured."
+          echo "✓ All required secrets are configured."
+          echo "::endgroup::"
 
       - name: Configure Git
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "::notice::Git configured successfully."
