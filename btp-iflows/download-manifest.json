@@ -1,10 +1,10 @@
 {
   "manifestVersion": "1.0",
-  "generatedAtUtc": "2026-07-02T11:55:36Z",
+  "generatedAtUtc": "2026-07-02T11:57:56Z",
   "github": {
     "repository": "raghav-acc/demo-actions",
-    "workflowRunNumber": "71",
-    "workflowRunId": "28588032951",
+    "workflowRunNumber": "72",
+    "workflowRunId": "28588164410",
     "commit": "f92f115719dc99ed3361bff3cae97bb4c9c5093c",
     "targetBranch": "feature/btp-iflow-backup"
   },
@@ -14,19 +14,10 @@
     "filterMode": "CASE-SENSITIVE"
   },
   "summary": {
-    "downloaded": 2,
+    "downloaded": 1,
     "failed": 0
   },
   "downloadedArtifacts": [
-    {
-      "id": "EmployeeSync",
-      "name": "EmployeeSync",
-      "packageId": "EmployeeIntegration",
-      "downloadedVersion": "1.0.1.ReadyForDeployment",
-      "zipFile": "btp-iflows/EmployeeSync/1.0.1.ReadyForDeployment/EmployeeSync_1.0.1.ReadyForDeployment.zip",
-      "folder": "btp-iflows/EmployeeSync/1.0.1.ReadyForDeployment",
-      "status": "Downloaded"
-    },
     {
       "id": "IFlow",
       "name": "IFlow",
