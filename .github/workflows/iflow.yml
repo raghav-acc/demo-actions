@@ -1,215 +1,532 @@
-name: IFLOW's DOWNLOAD AND TEST USING CPILINT & BRUNO PIPELINE
+name: Download ReadyForDeployment iFlows from SAP BTP
 
 on:
   workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Feature branch where downloaded iFlows will be pushed"
+        required: false
+        default: "feature/btp-iflow-backup"
+
+  schedule:
+    # Runs twice daily at 09:00 IST and 18:00 IST
+    # GitHub cron runs in UTC
+    - cron: "30 3,12 * * *"
+
+permissions:
+  contents: write
+
+env:
+  TARGET_BRANCH: feature/btp-iflow-backup
+  DEPLOYMENT_MARKER: ReadyForDeployment
+  DOWNLOAD_DIR: btp-iflows
+  EXTRACT_ZIP: "true"
 
 jobs:
+  download-ready-iflows:
+    name: Download X.Y.Z.ReadyForDeployment iFlows from SAP CPI
+    runs-on: ubuntu-latest
 
-  # =====================================================
-  # JOB 1 - DOWNLOAD IFLOWS
-  # =====================================================
-  download-iflows:
-    runs-on: windows-latest
-
-    env:
-      BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
-      BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
-      BTP_AUTH_URL: ${{ secrets.BTP_AUTH_URL }}
-      BTP_BASE_URL: ${{ secrets.BTP_BASE_URL }}
+    # Keep this only if secrets are stored under GitHub Environment secrets.
+    environment: dev
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Get OAuth Token
-        shell: powershell
+      - name: Resolve runtime inputs
+        shell: bash
         run: |
-          $body = @{
-            grant_type    = 'client_credentials'
-            client_id     = "${env:BTP_CLIENT_ID}"
-            client_secret = "${env:BTP_CLIENT_SECRET}"
-          }
+          set -euo pipefail
 
-          $res = Invoke-RestMethod `
-            -Method Post `
-            -Uri "${env:BTP_AUTH_URL}" `
-            -ContentType "application/x-www-form-urlencoded" `
-            -Body $body
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TARGET_BRANCH_VALUE="${{ github.event.inputs.target_branch }}"
+          else
+            TARGET_BRANCH_VALUE="$TARGET_BRANCH"
+          fi
 
-          "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
+          echo "TARGET_BRANCH=$TARGET_BRANCH_VALUE" >> "$GITHUB_ENV"
 
-      - name: List Recent iFlows
-        shell: powershell
+          echo "Target branch resolved: $TARGET_BRANCH_VALUE"
+          echo "Deployment marker    : $DEPLOYMENT_MARKER"
+          echo "Filter mode          : CASE-SENSITIVE"
+
+      - name: Validate required GitHub secrets
+        shell: bash
+        env:
+          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
+          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
+          set -euo pipefail
 
-          $Hours = 12
-          $OutFile = "recent_iflows.json"
+          echo "Validating required secrets..."
 
-          $headers = @{
-            Authorization = "Bearer $env:BTP_TOKEN"
-            Accept = "application/json"
-          }
+          if [ -z "${SAP_BTP_TOKEN_URL:-}" ]; then
+            echo "ERROR: SAP_BTP_TOKEN_URL secret is missing or empty."
+            exit 1
+          fi
 
-          $items = Invoke-RestMethod `
-            -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
-            -Headers $headers
+          if [ -z "${SAP_BTP_OAUTH_CLIENT_ID:-}" ]; then
+            echo "ERROR: SAP_BTP_OAUTH_CLIENT_ID secret is missing or empty."
+            exit 1
+          fi
 
-          $cutUtc = (Get-Date).ToUniversalTime().AddHours(-$Hours)
+          if [ -z "${SAP_BTP_OAUTH_CLIENT_SECRET:-}" ]; then
+            echo "ERROR: SAP_BTP_OAUTH_CLIENT_SECRET secret is missing or empty."
+            exit 1
+          fi
 
-          $recent = foreach ($i in $items.d.results) {
+          if [ -z "${SAP_CPI_API_BASE_URL:-}" ]; then
+            echo "ERROR: SAP_CPI_API_BASE_URL secret is missing or empty."
+            exit 1
+          fi
 
-            if ($i.Status -ne "Started") { continue }
+          if [ "${SAP_BTP_TOKEN_URL#https://}" = "$SAP_BTP_TOKEN_URL" ]; then
+            echo "ERROR: SAP_BTP_TOKEN_URL must start with https://"
+            exit 1
+          fi
 
-            try {
-              $dt = [datetime]::Parse($i.DeployedOn)
-            } catch {
+          if [ "${SAP_CPI_API_BASE_URL#https://}" = "$SAP_CPI_API_BASE_URL" ]; then
+            echo "ERROR: SAP_CPI_API_BASE_URL must start with https://"
+            exit 1
+          fi
+
+          echo "All required secrets are configured."
+
+      - name: Configure Git
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create or switch to target feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin
+
+          if git ls-remote --exit-code --heads origin "$TARGET_BRANCH"; then
+            echo "Remote branch exists: $TARGET_BRANCH"
+            git checkout "$TARGET_BRANCH"
+            git pull origin "$TARGET_BRANCH"
+          else
+            echo "Remote branch does not exist. Creating: $TARGET_BRANCH"
+            git checkout -b "$TARGET_BRANCH"
+          fi
+
+      - name: Get SAP BTP OAuth token
+        shell: bash
+        env:
+          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          SAP_BTP_TOKEN_URL="${SAP_BTP_TOKEN_URL%/}"
+          TOKEN_ENDPOINT="$SAP_BTP_TOKEN_URL"
+
+          TOKEN_ENDPOINT_WITHOUT_SUFFIX="${TOKEN_ENDPOINT%/oauth/token}"
+
+          if [ "$TOKEN_ENDPOINT_WITHOUT_SUFFIX" = "$TOKEN_ENDPOINT" ]; then
+            TOKEN_ENDPOINT="$TOKEN_ENDPOINT/oauth/token"
+          fi
+
+          echo "Requesting SAP OAuth token..."
+
+          TOKEN_RESPONSE=$(curl -sS \
+            --request POST "$TOKEN_ENDPOINT" \
+            --user "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
+            --header "Content-Type: application/x-www-form-urlencoded" \
+            --data "grant_type=client_credentials" \
+            --write-out "\nHTTP_CODE=%{http_code}")
+
+          HTTP_CODE=$(echo "$TOKEN_RESPONSE" | sed -n 's/^HTTP_CODE=//p')
+          BODY=$(echo "$TOKEN_RESPONSE" | sed '/^HTTP_CODE=/d')
+
+          echo "Token HTTP status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Failed to get SAP OAuth token."
+            echo "$BODY"
+            exit 1
+          fi
+
+          ACCESS_TOKEN=$(echo "$BODY" | jq -r '.access_token')
+
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "ERROR: access_token not found in token response."
+            echo "$BODY"
+            exit 1
+          fi
+
+          echo "::add-mask::$ACCESS_TOKEN"
+          echo "SAP_ACCESS_TOKEN=$ACCESS_TOKEN" >> "$GITHUB_ENV"
+
+          echo "SAP OAuth token generated successfully."
+
+      - name: Discover iFlows with saved version from SAP CPI
+        shell: bash
+        env:
+          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          SAP_CPI_API_BASE_URL="${SAP_CPI_API_BASE_URL%/}"
+          mkdir -p "$DOWNLOAD_DIR"
+
+          echo "Checking SAP CPI metadata..."
+
+          METADATA_HTTP_CODE=$(curl -sS \
+            --request GET "$SAP_CPI_API_BASE_URL/api/v1/\$metadata" \
+            --header "Authorization: Bearer $SAP_ACCESS_TOKEN" \
+            --header "Accept: application/xml" \
+            --output metadata.xml \
+            --write-out "%{http_code}")
+
+          echo "Metadata HTTP status: $METADATA_HTTP_CODE"
+
+          if [ "$METADATA_HTTP_CODE" != "200" ]; then
+            echo "ERROR: Metadata endpoint failed."
+            head -50 metadata.xml || true
+            exit 1
+          fi
+
+          echo "Fetching IntegrationPackages..."
+
+          PACKAGES_HTTP_CODE=$(curl -sS \
+            --request GET "$SAP_CPI_API_BASE_URL/api/v1/IntegrationPackages?\$format=json" \
+            --header "Authorization: Bearer $SAP_ACCESS_TOKEN" \
+            --header "Accept: application/json" \
+            --output packages-response.json \
+            --write-out "%{http_code}")
+
+          echo "IntegrationPackages HTTP status: $PACKAGES_HTTP_CODE"
+
+          if [ "$PACKAGES_HTTP_CODE" != "200" ]; then
+            echo "ERROR: Could not fetch IntegrationPackages."
+            cat packages-response.json || true
+            exit 1
+          fi
+
+          echo '{"d":{"results":[]}}' > active-artifacts-response.json
+
+          echo "Fetching artifacts from each package..."
+
+          jq -r '.d.results[]?.Id' packages-response.json | while read -r PACKAGE_ID; do
+            if [ -z "$PACKAGE_ID" ] || [ "$PACKAGE_ID" = "null" ]; then
               continue
-            }
+            fi
 
-            if ($dt -ge $cutUtc) {
-              [pscustomobject]@{
-                Id      = $i.Id
-                Version = $i.Version
-              }
-            }
-          }
+            echo "Fetching artifacts for package: $PACKAGE_ID"
 
-          $recent | ConvertTo-Json -Depth 5 | Set-Content $OutFile
+            SAFE_PACKAGE_FILE=$(echo "$PACKAGE_ID" | tr -cd '[:alnum:]_.-')
+            PACKAGE_RESPONSE_FILE="package-artifacts-${SAFE_PACKAGE_FILE}.json"
 
-      - name: Download iFlows
-        shell: powershell
+            ODATA_PACKAGE_ID=$(printf "%s" "$PACKAGE_ID" | sed "s/'/''/g")
+
+            PACKAGE_ARTIFACT_HTTP_CODE=$(curl -sS \
+              --request GET "$SAP_CPI_API_BASE_URL/api/v1/IntegrationPackages('$ODATA_PACKAGE_ID')/IntegrationDesigntimeArtifacts?\$format=json" \
+              --header "Authorization: Bearer $SAP_ACCESS_TOKEN" \
+              --header "Accept: application/json" \
+              --output "$PACKAGE_RESPONSE_FILE" \
+              --write-out "%{http_code}")
+
+            echo "Package artifact HTTP status for $PACKAGE_ID: $PACKAGE_ARTIFACT_HTTP_CODE"
+
+            if [ "$PACKAGE_ARTIFACT_HTTP_CODE" = "200" ]; then
+              jq -s '
+                {
+                  d: {
+                    results: (
+                      (.[0].d.results // []) + (.[1].d.results // [])
+                    )
+                  }
+                }
+              ' active-artifacts-response.json "$PACKAGE_RESPONSE_FILE" > combined-artifacts.json
+
+              mv combined-artifacts.json active-artifacts-response.json
+            else
+              echo "WARNING: Could not fetch artifacts for package: $PACKAGE_ID"
+              cat "$PACKAGE_RESPONSE_FILE" || true
+            fi
+          done
+
+          echo "Total discovered artifacts:"
+          jq '.d.results | length' active-artifacts-response.json
+
+          python3 << 'PY'
+          import json
+          import re
+
+          # CASE-SENSITIVE strict match.
+          # Only accepts: X.Y.Z.ReadyForDeployment
+          # Examples:
+          #   1.1.2.ReadyForDeployment  --> VALID
+          #   1.0.1.ReadyFordeployment  --> INVALID
+          #   1.0.1.readyfordeployment  --> INVALID
+          version_pattern = re.compile(
+              r"^(\d+)\.(\d+)\.(\d+)\.ReadyForDeployment$"
+          )
+
+          with open("active-artifacts-response.json", "r", encoding="utf-8") as file:
+              payload = json.load(file)
+
+          artifacts = payload.get("d", {}).get("results", [])
+
+          matched = []
+          skipped = []
+
+          for artifact in artifacts:
+              artifact_id = artifact.get("Id")
+              artifact_name = artifact.get("Name", artifact_id)
+              artifact_version = artifact.get("Version")
+              package_id = artifact.get("PackageId")
+
+              if not artifact_id:
+                  continue
+
+              if not artifact_version:
+                  skipped.append({
+                      "id": artifact_id,
+                      "name": artifact_name,
+                      "packageId": package_id,
+                      "versionFromSAP": None,
+                      "reason": "Missing SAP saved version"
+                  })
+                  continue
+
+              if version_pattern.match(artifact_version):
+                  matched.append({
+                      "id": artifact_id,
+                      "name": artifact_name,
+                      "packageId": package_id,
+                      "savedVersion": artifact_version
+                  })
+              else:
+                  skipped.append({
+                      "id": artifact_id,
+                      "name": artifact_name,
+                      "packageId": package_id,
+                      "versionFromSAP": artifact_version,
+                      "reason": "SAP saved version does not match X.Y.Z.ReadyForDeployment (case-sensitive)"
+                  })
+
+          with open("selected-iflows.json", "w", encoding="utf-8") as file:
+              json.dump(matched, file, indent=2)
+
+          with open("skipped-iflows.json", "w", encoding="utf-8") as file:
+              json.dump(skipped, file, indent=2)
+
+          print(f"Total artifacts fetched: {len(artifacts)}")
+          print(f"Matched iFlows        : {len(matched)}")
+          print(f"Skipped iFlows        : {len(skipped)}")
+
+          for item in matched:
+              print(
+                  f"- MATCHED: ID={item['id']} | "
+                  f"Package={item.get('packageId')} | "
+                  f"Saved Version={item['savedVersion']}"
+              )
+
+          for item in skipped:
+              print(
+                  f"- SKIPPED: ID={item['id']} | "
+                  f"Version={item.get('versionFromSAP')} | "
+                  f"Reason={item['reason']}"
+              )
+          PY
+
+          SELECTED_COUNT=$(jq length selected-iflows.json)
+
+          if [ "$SELECTED_COUNT" -eq 0 ]; then
+            echo "No iFlows found with saved version format X.Y.Z.ReadyForDeployment (case-sensitive)."
+            exit 0
+          fi
+
+      - name: Download selected iFlows using their SAP saved version
+        shell: bash
+        env:
+          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
+          set -euo pipefail
 
-          New-Item -ItemType Directory -Force -Path iflows
+          SAP_CPI_API_BASE_URL="${SAP_CPI_API_BASE_URL%/}"
 
-          if (!(Test-Path "recent_iflows.json")) {
-            throw "recent_iflows.json not found"
-          }
+          echo "[]" > matched-iflows.json
+          echo "[]" > failed-iflows.json
 
-          $rows = Get-Content recent_iflows.json -Raw | ConvertFrom-Json
+          jq -c '.[]' selected-iflows.json | while read -r item; do
+            IFLOW_ID=$(echo "$item" | jq -r '.id')
+            IFLOW_NAME=$(echo "$item" | jq -r '.name')
+            PACKAGE_ID=$(echo "$item" | jq -r '.packageId // "NA"')
+            IFLOW_VERSION=$(echo "$item" | jq -r '.savedVersion')
 
-          foreach ($r in $rows) {
+            SAFE_ID=$(echo "$IFLOW_ID" | tr -cd '[:alnum:]_.-')
+            SAFE_VERSION=$(echo "$IFLOW_VERSION" | tr -cd '[:alnum:]_.-')
 
-            $headers = @{
-              Authorization = "Bearer $env:BTP_TOKEN"
-              Accept = "application/zip"
-            }
+            TARGET_PATH="$DOWNLOAD_DIR/$SAFE_ID/$SAFE_VERSION"
+            ZIP_FILE="$TARGET_PATH/${SAFE_ID}_${SAFE_VERSION}.zip"
+            ERROR_FILE="$TARGET_PATH/${SAFE_ID}_${SAFE_VERSION}_sap_error.txt"
 
-            $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
+            mkdir -p "$TARGET_PATH"
 
-            $zip = "iflows\$($r.Id)_$($r.Version).zip"
+            ODATA_ID=$(printf "%s" "$IFLOW_ID" | sed "s/'/''/g")
+            ODATA_VERSION=$(printf "%s" "$IFLOW_VERSION" | sed "s/'/''/g")
 
-            Write-Host "Downloading $($r.Id)"
+            DOWNLOAD_URL="$SAP_CPI_API_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$ODATA_ID',Version='$ODATA_VERSION')/\$value"
 
-            Invoke-WebRequest `
-              -Uri $uri `
-              -Headers $headers `
-              -OutFile $zip
-          }
+            echo "------------------------------------------------------------"
+            echo "Downloading iFlow exactly as saved in SAP CPI"
+            echo "ID      : $IFLOW_ID"
+            echo "Name    : $IFLOW_NAME"
+            echo "Package : $PACKAGE_ID"
+            echo "Version : $IFLOW_VERSION"
+            echo "Folder  : $TARGET_PATH"
+            echo "------------------------------------------------------------"
 
-      - name: Upload iFlows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: downloaded-iflows
-          path: iflows
-  # =====================================================
-  # JOB 2 - CPILINT TESTING
-  # =====================================================
-  cpilint-analysis:
-    needs: download-iflows
-    runs-on: windows-latest
+            HTTP_CODE=$(curl -sS \
+              --connect-timeout 10 \
+              --max-time 90 \
+              --request GET "$DOWNLOAD_URL" \
+              --header "Authorization: Bearer $SAP_ACCESS_TOKEN" \
+              --header "Accept: application/zip" \
+              --output "$ZIP_FILE" \
+              --write-out "%{http_code}")
 
-    steps:
+            echo "Download HTTP status: $HTTP_CODE"
 
-      - uses: actions/checkout@v4
+            if [ "$HTTP_CODE" = "200" ] && [ -s "$ZIP_FILE" ]; then
+              echo "Downloaded successfully: $IFLOW_ID | $IFLOW_VERSION"
 
-      - name: Download iFlows
-        uses: actions/download-artifact@v4
-        with:
-          name: downloaded-iflows
-          path: downloads
+              if [ "$EXTRACT_ZIP" = "true" ]; then
+                EXTRACT_PATH="$TARGET_PATH/extracted"
+                rm -rf "$EXTRACT_PATH"
+                mkdir -p "$EXTRACT_PATH"
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+                if unzip -tq "$ZIP_FILE" >/dev/null 2>&1; then
+                  unzip -q "$ZIP_FILE" -d "$EXTRACT_PATH"
+                  echo "ZIP extracted to: $EXTRACT_PATH"
+                else
+                  echo "WARNING: Downloaded file is not a valid ZIP. Keeping ZIP only."
+                fi
+              fi
 
-      - name: Download CPILint
-        shell: powershell
+              TMP_FILE=$(mktemp)
+
+              jq \
+                --arg id "$IFLOW_ID" \
+                --arg name "$IFLOW_NAME" \
+                --arg packageId "$PACKAGE_ID" \
+                --arg version "$IFLOW_VERSION" \
+                --arg zipFile "$ZIP_FILE" \
+                --arg folder "$TARGET_PATH" \
+                '. + [{
+                  id: $id,
+                  name: $name,
+                  packageId: $packageId,
+                  downloadedVersion: $version,
+                  zipFile: $zipFile,
+                  folder: $folder,
+                  status: "Downloaded"
+                }]' matched-iflows.json > "$TMP_FILE"
+
+              mv "$TMP_FILE" matched-iflows.json
+            else
+              echo "ERROR: Failed to download $IFLOW_ID version $IFLOW_VERSION"
+
+              curl -sS \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --request GET "$DOWNLOAD_URL" \
+                --header "Authorization: Bearer $SAP_ACCESS_TOKEN" \
+                --header "Accept: application/json" \
+                --output "$ERROR_FILE" || true
+
+              echo "SAP error response:"
+              cat "$ERROR_FILE" || true
+
+              rm -f "$ZIP_FILE"
+
+              TMP_FILE=$(mktemp)
+
+              jq \
+                --arg id "$IFLOW_ID" \
+                --arg version "$IFLOW_VERSION" \
+                --arg httpCode "$HTTP_CODE" \
+                --arg errorFile "$ERROR_FILE" \
+                '. + [{
+                  id: $id,
+                  attemptedVersion: $version,
+                  httpCode: $httpCode,
+                  errorFile: $errorFile,
+                  status: "Failed"
+                }]' failed-iflows.json > "$TMP_FILE"
+
+              mv "$TMP_FILE" failed-iflows.json
+            fi
+          done
+
+          SUCCESS_COUNT=$(jq length matched-iflows.json)
+          FAILED_COUNT=$(jq length failed-iflows.json)
+
+          echo "Downloaded iFlows count: $SUCCESS_COUNT"
+          echo "Failed iFlows count: $FAILED_COUNT"
+
+          if [ "$SUCCESS_COUNT" -eq 0 ]; then
+            echo "ERROR: No iFlows were downloaded."
+            exit 1
+          fi
+
+          if [ "$FAILED_COUNT" -gt 0 ]; then
+            echo "WARNING: Some iFlows failed to download."
+            cat failed-iflows.json
+          fi
+
+      - name: Create download manifest
+        shell: bash
         run: |
+          set -euo pipefail
 
-          $url = "https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip"
+          MANIFEST_FILE="$DOWNLOAD_DIR/download-manifest.json"
 
-          Invoke-WebRequest `
-            -Uri $url `
-            -OutFile cpilint.zip
+          jq \
+            --arg downloadedAt "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg targetBranch "$TARGET_BRANCH" \
+            --arg acceptedVersionFormat "X.Y.Z.ReadyForDeployment" \
+            '{
+              downloadedAtUtc: $downloadedAt,
+              targetBranch: $targetBranch,
+              acceptedVersionFormat: $acceptedVersionFormat,
+              filterMode: "CASE-SENSITIVE",
+              selectionRule: "Pipeline reads SAP artifact Version field and downloads only those matching X.Y.Z.ReadyForDeployment strictly.",
+              downloadRule: "Download URL uses IntegrationDesigntimeArtifacts(Id=<id>,Version=<saved SAP version>)/$value.",
+              artifacts: .
+            }' matched-iflows.json > "$MANIFEST_FILE"
 
-          Expand-Archive `
-            cpilint.zip `
-            -DestinationPath cpilint `
-            -Force
+          echo "Download manifest created:"
+          cat "$MANIFEST_FILE"
 
-      - name: Extract iFlows
-        shell: powershell
+      - name: Commit and push downloaded iFlows
+        shell: bash
         run: |
+          set -euo pipefail
 
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path temp_iflows
+          git add "$DOWNLOAD_DIR"
 
-          Get-ChildItem downloads -Filter *.zip | ForEach-Object {
+          if git diff --staged --quiet; then
+            echo "No changes detected. Nothing to commit."
+            exit 0
+          fi
 
-            $target = Join-Path temp_iflows $_.BaseName
+          git commit -m "Download SAP BTP iFlows saved as X.Y.Z.ReadyForDeployment (case-sensitive)"
+          git push origin "$TARGET_BRANCH"
 
-            Expand-Archive `
-              $_.FullName `
-              -DestinationPath $target `
-              -Force
-          }
-
-      - name: Run CPILint
-        continue-on-error: true
-        shell: powershell
-        run: |
-         
-          New-Item -ItemType Directory -Force -Path cpilint-results | Out-Null
-          Write-Host "=== Checking CPILint Directory ==="
-          if (!(Test-Path "cpilint")) {
-          throw "cpilint folder not found"
-          }
-          Get-ChildItem cpilint -Recurse
-          $cpilintDir = Get-ChildItem cpilint -Directory | Select-Object -First 1
-          if ($null -eq $cpilintDir) {
-          throw "No CPILint installation directory found"
-          }
-           Write-Host "CPILint Dir: $($cpilintDir.FullName)"
-           $classpath = "$($cpilintDir.FullName)\lib\*;$($cpilintDir.FullName)\logback"
-           $rulesFile = "$($cpilintDir.FullName)\samples\naming.xml"
-           Write-Host "Rules File: $rulesFile"
-           if (!(Test-Path $rulesFile)) {
-           throw "Rules file not found"
-           }
-             Write-Host "=== Java Version ==="
-             java -version
-             if (!(Test-Path "temp_iflows")) {
-            throw "temp_iflows directory not found"
-            }
-            $iflows = Get-ChildItem temp_iflows -Directory
-            Write-Host "Found $($iflows.Count) extracted iFlows"
-            foreach ($dir in $iflows) {
-            $iflow = $dir.Name
-            Write-Host "Analyzing $iflow"
-            $cmd = "java -classpath `"$classpath`" org.cpilint.CliClient -rules `"$rulesFile`" -unpacked-files `"$($dir.FullName)`" -boring"
-            Write-Host $cmd
-            $output = cmd /c $cmd 2>&1
-            $output | Tee-Object -FilePath "cpilint-results\$iflow-result.txt"
-            Write-Host "Finished $iflow"
-            } 
-    
-      - name: Upload CPILint Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpilint-results
-          path: cpilint-results
+          echo "Downloaded iFlows pushed to branch: $TARGET_BRANCH"
