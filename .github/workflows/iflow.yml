@@ -190,28 +190,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Download CPI Lint
+      - name: Install CPILint
         run: |
-          wget -O cpilint.jar https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip
-
-      - name: Run CPI Lint on ReadyForDeployment iFlows
+          wget https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip
+          unzip -q cpilint.zip -d cpilint
+          chmod +x cpilint/bin/cpilint
+          echo "$GITHUB_WORKSPACE/cpilint/bin" >> $GITHUB_PATH
+      - name: Run CPILint
         shell: bash
         run: |
           set -euo pipefail
-
-          FAILED=0
-
-          find "${DOWNLOAD_DIR}" -mindepth 1 -maxdepth 1 -type d | while read -r iflow; do
-            echo "========================================="
-            echo "Running CPI Lint for: $(basename "$iflow")"
-            echo "========================================="
-
-            if ! java -jar cpilint.jar "$iflow"; then
-              FAILED=1
-            fi
-          done
-
-          exit $FAILED
+          ./cpilint/bin/cpilint \
+          -directory "${DOWNLOAD_DIR}/IFlow/current"   
+         
 
       - name: Upload CPI Lint Report
         if: always()
