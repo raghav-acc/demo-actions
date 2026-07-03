@@ -192,7 +192,7 @@ jobs:
 
       - name: Download CPI Lint
         run: |
-          wget -O cpilint.jar https://github.com/engsweeye/cpi-lint/releases/latest/download/cpilint.jar
+          wget -O cpilint.jar https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip
 
       - name: Run CPI Lint on ReadyForDeployment iFlows
         shell: bash
