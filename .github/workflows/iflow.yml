@@ -196,6 +196,12 @@ jobs:
           unzip -q cpilint-1.1.0.zip -d cpilint
           chmod +x cpilint/cpilint-1.1.0/bin/cpilint
           echo "$GITHUB_WORKSPACE/cpilint/cpilint-1.1.0/bin" >> $GITHUB_PATH
+
+      - name: Verify CPILint installation
+        run: |
+          pwd
+          ls -R
+          find . -name cpilint -type f     
       - name: Run CPILint
         shell: bash
         run: |
