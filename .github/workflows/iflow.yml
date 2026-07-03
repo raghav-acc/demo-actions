@@ -199,7 +199,7 @@ jobs:
 
   
       - name: Run CPILint
-        continue-on-error: true
+        #continue-on-error: true
         run: |
           ./cpilint/cpilint-1.1.0/bin/cpilint \
           -rules ./cpilint.xml \
