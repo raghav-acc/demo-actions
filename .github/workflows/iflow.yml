@@ -1,105 +1,170 @@
-name: Download ReadyForDeployment iFlows from SAP BTP
+name: Backup SAP CPI Ready for Deployment iFlows
 
 on:
   workflow_dispatch:
     inputs:
       target_branch:
-        description: "Feature branch where downloaded iFlows will be pushed"
+        description: "Target branch for iFlow backup"
         required: false
         default: "feature/btp-iflow-backup"
 
   schedule:
-    # Runs daily at 09:00 IST and 18:00 IST (03:30 & 12:30 UTC)
+    # 09:00 IST & 18:00 IST
     - cron: "30 3,12 * * *"
 
 permissions:
   contents: write
 
 env:
-  DEPLOYMENT_MARKER: ReadyForDeployment
+  DEFAULT_TARGET_BRANCH: feature/btp-iflow-backup
   DOWNLOAD_DIR: btp-iflows
+  DEPLOYMENT_MARKER: ReadyForDeployment
   EXTRACT_ZIP: "true"
-  TARGET_BRANCH: feature/btp-iflow-backup
 
 jobs:
-  download-ready-iflows:
-    name: Download ReadyForDeployment iFlows
+  backup-iflows:
+    name: Backup Ready for Deployment iFlows
     runs-on: ubuntu-latest
+
     environment: dev
 
     steps:
-      - name: Checkout repository
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.inputs.target_branch || env.DEFAULT_TARGET_BRANCH }}
 
-      - name: Resolve runtime configuration
+      - name: Make scripts executable
+        run: chmod +x .github/scripts/*.sh
+
+      - name: Resolve runtime variables
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -euo pipefail
 
-          TARGET_BRANCH_VALUE="${TARGET_BRANCH}"
-
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.target_branch }}" ]]; then
-            TARGET_BRANCH_VALUE="${{ github.event.inputs.target_branch }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TARGET_BRANCH="${{ github.event.inputs.target_branch }}"
+          else
+            TARGET_BRANCH="${DEFAULT_TARGET_BRANCH}"
           fi
 
-          echo "TARGET_BRANCH=${TARGET_BRANCH_VALUE}" >> "$GITHUB_ENV"
+          echo "TARGET_BRANCH=$TARGET_BRANCH" >> $GITHUB_ENV
 
-          echo "::group::Runtime Configuration"
-          echo "Target Branch      : ${TARGET_BRANCH_VALUE}"
-          echo "Deployment Marker  : ${DEPLOYMENT_MARKER}"
-          echo "Download Directory : ${DOWNLOAD_DIR}"
-          echo "Extract ZIP        : ${EXTRACT_ZIP}"
-          echo "::endgroup::"
+          echo "--------------------------------------------"
+          echo "Target Branch      : $TARGET_BRANCH"
+          echo "Download Folder    : $DOWNLOAD_DIR"
+          echo "Deployment Marker  : $DEPLOYMENT_MARKER"
+          echo "Extract ZIP        : $EXTRACT_ZIP"
+          echo "--------------------------------------------"
 
-      - name: Validate SAP BTP configuration
-        shell: bash
+      - name: Validate Required Secrets
         env:
           SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
           SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
           SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
           SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
-          set -Eeuo pipefail
-
-          echo "::group::Validating Required Secrets"
-
-          required_vars=(
-            SAP_BTP_TOKEN_URL
-            SAP_BTP_OAUTH_CLIENT_ID
-            SAP_BTP_OAUTH_CLIENT_SECRET
-            SAP_CPI_API_BASE_URL
-          )
-
-          for var in "${required_vars[@]}"; do
-            if [[ -z "${!var:-}" ]]; then
-              echo "::error::Required secret '${var}' is missing or empty."
-              exit 1
-            fi
-          done
-
-          url_vars=(
-            SAP_BTP_TOKEN_URL
-            SAP_CPI_API_BASE_URL
-          )
-
-          for var in "${url_vars[@]}"; do
-            if [[ ! "${!var}" =~ ^https:// ]]; then
-              echo "::error::${var} must start with https://"
-              exit 1
-            fi
-          done
-
-          echo "✓ All required secrets are configured."
-          echo "::endgroup::"
+          ./.github/scripts/validate-secrets.sh
 
       - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Checkout Target Branch
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -euo pipefail
 
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin
 
-          echo "::notice::Git configured successfully."
+          if git ls-remote --exit-code --heads origin "$TARGET_BRANCH"; then
+              git checkout "$TARGET_BRANCH"
+              git pull origin "$TARGET_BRANCH"
+          else
+              git checkout -b "$TARGET_BRANCH"
+          fi
+
+      - name: Generate SAP OAuth Token
+        env:
+          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
+        run: |
+          ./.github/scripts/get-token.sh
+
+      - name: Discover Ready for Deployment iFlows
+        env:
+          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+        run: |
+          ./.github/scripts/discover-iflows.sh
+
+      - name: Download Ready for Deployment iFlows
+        env:
+          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+        run: |
+          ./.github/scripts/download-iflow.sh
+
+      - name: Create Backup Manifest
+        run: |
+          ./.github/scripts/create-manifest.sh
+
+      - name: Commit Changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git add "$DOWNLOAD_DIR"
+
+          if git diff --cached --quiet; then
+              echo "No changes detected."
+              exit 0
+          fi
+
+          git commit -m "Backup ReadyForDeployment iFlows"
+
+          git push origin "$TARGET_BRANCH"
+
+          echo "Backup completed successfully."
+
+      - name: Upload Workflow Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iflow-backup-report
+          path: |
+            selected-iflows.json
+            matched-iflows.json
+            failed-iflows.json
+            skipped-iflows.json
+            ${{ env.DOWNLOAD_DIR }}/download-manifest.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Workflow Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## SAP CPI Backup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Target Branch | $TARGET_BRANCH |" >> $GITHUB_STEP_SUMMARY
+          echo "| Download Folder | $DOWNLOAD_DIR |" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -f matched-iflows.json ]]; then
+            echo "| Downloaded iFlows | $(jq length matched-iflows.json) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ -f failed-iflows.json ]]; then
+            echo "| Failed Downloads | $(jq length failed-iflows.json) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ -f skipped-iflows.json ]]; then
+            echo "| Skipped iFlows | $(jq length skipped-iflows.json) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Backup workflow completed."
