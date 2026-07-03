@@ -538,7 +538,7 @@ jobs:
   cpilint-check:
     name: CPI Lint Validation
     runs-on: ubuntu-latest
-    needs: backup-iflows
+    needs: download-ready-iflows
 
     steps:
       - name: Checkout Repository
