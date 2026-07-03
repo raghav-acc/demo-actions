@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: IFlow
 Bundle-SymbolicName: IFlow; singleton:=true
-Bundle-Version: 6.0.1.ReadyForDeployment
+Bundle-Version: 5.0.1.ReadyForDeployment
 SAP-BundleType: IntegrationFlow
 SAP-NodeType: IFLMAP
 SAP-RuntimeProfile: iflmap

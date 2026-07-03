@@ -1,10 +1,10 @@
 {
   "manifestVersion": "1.0",
-  "generatedAtUtc": "2026-07-03T10:05:06Z",
+  "generatedAtUtc": "2026-07-03T10:07:10Z",
   "github": {
     "repository": "raghav-acc/demo-actions",
-    "workflowRunNumber": "101",
-    "workflowRunId": "28653477068",
+    "workflowRunNumber": "102",
+    "workflowRunId": "28653586486",
     "commit": "8e5e1022dc9a2996f5615508c286413d1d9b832c",
     "targetBranch": "feature/btp-iflow-backup"
   },
@@ -14,8 +14,17 @@
     "filterMode": "CASE-SENSITIVE"
   },
   "summary": {
-    "downloaded": 0,
+    "downloaded": 1,
     "failed": 0
   },
-  "downloadedArtifacts": []
+  "downloadedArtifacts": [
+    {
+      "id": "IFlow",
+      "name": "IFlow",
+      "packageId": "IFlow",
+      "downloadedVersion": "6.0.1.ReadyForDeployment",
+      "folder": "btp-iflows/IFlow/current",
+      "status": "Downloaded"
+    }
+  ]
 }
