@@ -1,29 +1,18 @@
 {
-  "manifestVersion": "1.0",
-  "generatedAtUtc": "2026-07-03T11:03:02Z",
-  "github": {
-    "repository": "raghav-acc/demo-actions",
-    "workflowRunNumber": "111",
-    "workflowRunId": "28656350633",
-    "commit": "a2cdb042585ba990370dc64583fd8b2c75897557",
-    "targetBranch": "feature/btp-iflow-backup"
-  },
-  "backupPolicy": {
-    "deploymentMarker": "ReadyForDeployment",
-    "acceptedVersionPattern": "X.Y.Z.ReadyForDeployment",
-    "filterMode": "CASE-SENSITIVE"
-  },
-  "summary": {
-    "downloaded": 1,
-    "failed": 0
-  },
-  "downloadedArtifacts": [
+  "downloadedAtUtc": "2026-07-03T12:40:15Z",
+  "targetBranch": "feature/btp-iflow-backup",
+  "acceptedVersionFormat": "X.Y.Z.ReadyForDeployment",
+  "filterMode": "CASE-SENSITIVE",
+  "selectionRule": "Pipeline reads SAP artifact Version field and downloads only those matching X.Y.Z.ReadyForDeployment strictly.",
+  "downloadRule": "Download URL uses IntegrationDesigntimeArtifacts(Id=<id>,Version=<saved SAP version>)/$value.",
+  "artifacts": [
     {
       "id": "IFlow",
       "name": "IFlow",
       "packageId": "IFlow",
       "downloadedVersion": "6.0.1.ReadyForDeployment",
-      "folder": "btp-iflows/IFlow/current",
+      "zipFile": "btp-iflows/IFlow/6.0.1.ReadyForDeployment/IFlow_6.0.1.ReadyForDeployment.zip",
+      "folder": "btp-iflows/IFlow/6.0.1.ReadyForDeployment",
       "status": "Downloaded"
     }
   ]
