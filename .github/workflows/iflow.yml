@@ -168,3 +168,53 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Backup workflow completed."
+          
+      cpilint-check:
+      name: CPI Lint Validation
+      runs-on: ubuntu-latest
+      needs: backup-iflows
+
+      steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.target_branch || env.DEFAULT_TARGET_BRANCH }}
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download CPI Lint
+        run: |
+          wget -O cpilint.jar https://github.com/engsweeye/cpi-lint/releases/latest/download/cpilint.jar
+
+      - name: Run CPI Lint on ReadyForDeployment iFlows
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FAILED=0
+
+          find "${DOWNLOAD_DIR}" -mindepth 1 -maxdepth 1 -type d | while read -r iflow; do
+            echo "========================================="
+            echo "Running CPI Lint for: $(basename "$iflow")"
+            echo "========================================="
+
+            if ! java -jar cpilint.jar "$iflow"; then
+              FAILED=1
+            fi
+          done
+
+          exit $FAILED
+
+      - name: Upload CPI Lint Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpilint-report
+          path: |
+            cpilint*.*
+          if-no-files-found: ignore       
