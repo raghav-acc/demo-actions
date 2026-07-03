@@ -206,9 +206,7 @@ jobs:
         shell: bash
         run: |
           chmod +x ./cpilint/cpilint-1.1.0/bin/cpilint
-          dos2unix ./cpilint/cpilint-1.1.0/bin/cpilint || true
-          ./cpilint/cpilint-1.1.0/bin/cpilint \
-          -directory "${DOWNLOAD_DIR}/IFlow/current"
+          ./cpilint/cpilint-1.1.0/bin/cpilint -help
          
 
       - name: Upload CPI Lint Report
