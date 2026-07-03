@@ -205,9 +205,10 @@ jobs:
       - name: Run CPILint
         shell: bash
         run: |
-          set -euo pipefail
-          .cpilint/cpilint-1.1.0/bin/cpilint \
-          -directory "${DOWNLOAD_DIR}/IFlow/current"   
+          chmod +x ./cpilint/cpilint-1.1.0/bin/cpilint
+          dos2unix ./cpilint/cpilint-1.1.0/bin/cpilint || true
+          ./cpilint/cpilint-1.1.0/bin/cpilint \
+          -directory "${DOWNLOAD_DIR}/IFlow/current"
          
 
       - name: Upload CPI Lint Report
