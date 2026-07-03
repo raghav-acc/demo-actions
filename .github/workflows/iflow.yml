@@ -214,22 +214,3 @@ jobs:
             cpilint*.*
           if-no-files-found: ignore
 
-# =====================================================
-# JOB 2 - Create PR
-# =====================================================               
-  create-pr:
-    permissions:
-    contents: write
-    pull-requests: write
-    
-    steps:
-       - name: Create Pull Request
-         uses: repo-sync/pull-request@v2
-         with:
-         source_branch: feature/btp-iflow-backup
-         destination_branch: dev
-         pr_title: "ReadyForDeployment iFlow Backup"
-         pr_body: |
-              Automated PR after successful CPILint validation.
-              github_token: ${{ secrets.GITHUB_TOKEN }}
-          
