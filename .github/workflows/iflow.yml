@@ -197,17 +197,12 @@ jobs:
           chmod +x cpilint/cpilint-1.1.0/bin/cpilint
           echo "$GITHUB_WORKSPACE/cpilint/cpilint-1.1.0/bin" >> $GITHUB_PATH
 
-      - name: Verify CPILint installation
-        run: |
-          pwd
-          ls -R
-          find . -name cpilint -type f     
+  
       - name: Run CPILint
         run: |
           ./cpilint/cpilint-1.1.0/bin/cpilint \
-          -rules .github/cpilint/cpilint.xml \
+          -rules ./cpilint/cpilint-1.1.0/conf/rules.xml \
           -directory "${DOWNLOAD_DIR}/IFlow/current"
-         
 
       - name: Upload CPI Lint Report
         if: always()
