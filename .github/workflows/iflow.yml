@@ -201,7 +201,7 @@ jobs:
       - name: Run CPILint
         run: |
           ./cpilint/cpilint-1.1.0/bin/cpilint \
-          -rules ./cpilint/cpilint-1.1.0/conf/rules.xml \
+          -rules ./btp-iflow-backup/cpilint.xml \
           -directory "${DOWNLOAD_DIR}/IFlow/current"
 
       - name: Upload CPI Lint Report
