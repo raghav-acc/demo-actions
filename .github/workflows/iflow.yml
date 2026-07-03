@@ -194,8 +194,8 @@ jobs:
         run: |
           wget https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip
           unzip -q cpilint-1.1.0.zip -d cpilint
-          chmod +x cpilint/bin/cpilint
-          echo "$GITHUB_WORKSPACE/cpilint/bin" >> $GITHUB_PATH
+          chmod +x cpilint/cpilint-1.1.0/bin/cpilint
+          echo "$GITHUB_WORKSPACE/cpilint/cpilint-1.1.0/bin" >> $GITHUB_PATH
       - name: Run CPILint
         shell: bash
         run: |
