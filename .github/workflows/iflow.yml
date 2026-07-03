@@ -168,13 +168,16 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Backup workflow completed."
-          
-      cpilint-check:
-      name: CPI Lint Validation
-      runs-on: ubuntu-latest
-      needs: backup-iflows
+# =====================================================
+# JOB 2 - CPILINT TESTING
+# =====================================================          
 
-      steps:
+  cpilint-check:
+    name: CPI Lint Validation
+    runs-on: ubuntu-latest
+    needs: backup-iflows
+
+    steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
@@ -217,4 +220,4 @@ jobs:
           name: cpilint-report
           path: |
             cpilint*.*
-          if-no-files-found: ignore       
+          if-no-files-found: ignore
