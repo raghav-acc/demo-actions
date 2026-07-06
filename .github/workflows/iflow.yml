@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TARGET_BRANCH: feature
+  TARGET_BRANCH: feature2
   DEPLOYMENT_MARKER: ReadyForDeployment
   DOWNLOAD_DIR: btp-iflows
   EXTRACT_ZIP: "true"
