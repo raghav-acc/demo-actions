@@ -1,5 +1,5 @@
 {
-  "downloadedAtUtc": "2026-07-05T16:19:09Z",
+  "downloadedAtUtc": "2026-07-08T14:13:08Z",
   "targetBranch": "feature/btp-iflow-backup",
   "acceptedVersionFormat": "X.Y.Z.ReadyForDeployment",
   "filterMode": "CASE-SENSITIVE",
@@ -7,12 +7,12 @@
   "downloadRule": "Download URL uses IntegrationDesigntimeArtifacts(Id=<id>,Version=<saved SAP version>)/$value.",
   "artifacts": [
     {
-      "id": "IFlow",
-      "name": "IFlow",
-      "packageId": "IFlow",
-      "downloadedVersion": "6.0.1.ReadyForDeployment",
-      "zipFile": "btp-iflows/IFlow/6.0.1.ReadyForDeployment/IFlow_6.0.1.ReadyForDeployment.zip",
-      "folder": "btp-iflows/IFlow/6.0.1.ReadyForDeployment",
+      "id": "IFlow_Demo",
+      "name": "IFlow_Demo",
+      "packageId": "IFlowDemo",
+      "downloadedVersion": "1.0.2.ReadyForDeployment",
+      "zipFile": "btp-iflows/IFlow_Demo/1.0.2.ReadyForDeployment/IFlow_Demo_1.0.2.ReadyForDeployment.zip",
+      "folder": "btp-iflows/IFlow_Demo/1.0.2.ReadyForDeployment",
       "status": "Downloaded"
     }
   ]
