@@ -597,6 +597,6 @@ jobs:
       run: |
         gh pr create \
           --base dev \
-          --head feature/btp-iflow-backup \
+          --head feature2 \
           --title "ReadyForDeployment iFlow Backup" \
           --body "Automated PR after successful CPILint validation."
