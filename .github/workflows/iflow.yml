@@ -284,7 +284,6 @@ jobs:
     env:
       JAVA_VERSION: "17"
       CPILINT_VERSION: "1.1.0"
-      CPILINT_HOME: ${{ github.workspace }}/cpilint/cpilint-1.1.0
       IFLOW_DIRECTORY: btp-iflows/IFlow_Demo
 
     steps:
@@ -304,7 +303,7 @@ jobs:
         id: cpilint-cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.CPILINT_HOME }}
+          path: cpilint
           key: cpilint-${{ env.CPILINT_VERSION }}
 
       - name: Download CPILint
@@ -312,41 +311,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p cpilint
           wget -q https://github.com/mwittrock/cpilint/releases/download/v${CPILINT_VERSION}/cpilint-${CPILINT_VERSION}.zip
-          unzip -q cpilint-${CPILINT_VERSION}.zip -d "${CPILINT_HOME}"
-          chmod +x "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin/cpilint"
-          
-
-      - name: Add CPILint to PATH
+          unzip -q cpilint-${CPILINT_VERSION}.zip -d cpilint
+          chmod +x cpilint/cpilint-${CPILINT_VERSION}/bin/cpilint
+      - name: Verify CPILint Installation
+        shell: bash
         run: |
-          echo "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin" >> "$GITHUB_PATH"
-
+          set -euo pipefail
+          ls -R cpilint
       - name: Validate Inputs
         shell: bash
         run: |
           set -euo pipefail
           test -f cpilint.xml
           test -d "${IFLOW_DIRECTORY}"
-      - name: Inspect CPILint launcher
-        run: |
-          cat cpilint/cpilint-1.1.0/bin/cpilint
+          echo "IFlow Directory:"
+          ls -R "${IFLOW_DIRECTORY}"
       - name: Run CPILint
         shell: bash
         run: |
           set -euo pipefail
-          cpilint \
-            -rules cpilint.xml \
-            -directory "${IFLOW_DIRECTORY}"
-
+          export CPILINT_HOME="${GITHUB_WORKSPACE}/cpilint/cpilint-${CPILINT_VERSION}"
+          echo "CPILINT_HOME=$CPILINT_HOME"
+          "$CPILINT_HOME/bin/cpilint" \
+          -rules cpilint.xml \
+          -directory "${IFLOW_DIRECTORY}"
       - name: Upload CPILint Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cpilint-report
           path: |
-            *.html
-            *.xml
-            *.log
+            **/*.html
+            **/*.xml
+            **/*.log
           if-no-files-found: ignore
           retention-days: 7
-
