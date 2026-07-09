@@ -427,48 +427,93 @@ jobs:
           git push origin "$TARGET_BRANCH"
           echo "Downloaded iFlows pushed to branch: $TARGET_BRANCH"
 # =====================================================
-# JOB 2 - CPILINT TESTING
-# =====================================================          
+# JOB 2 - CPI Lint Validation
+# =====================================================
 
   cpilint-check:
     name: CPI Lint Validation
     runs-on: ubuntu-latest
     needs: download-ready-iflows
+    timeout-minutes: 10
 
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.inputs.target_branch || env.DEFAULT_TARGET_BRANCH }}
+  env:
+    JAVA_VERSION: "17"
+    CPILINT_VERSION: "1.1.0"
+    CPILINT_HOME: ${{ github.workspace }}/cpilint
+    IFLOW_DIRECTORY: ${{ env.DOWNLOAD_DIR }}/IFlow/current
 
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ${{ github.event.inputs.target_branch || env.DEFAULT_TARGET_BRANCH }}
 
-      - name: Install CPILint
-        run: |
-          wget https://github.com/mwittrock/cpilint/releases/download/v1.1.0/cpilint-1.1.0.zip
-          unzip -q cpilint-1.1.0.zip -d cpilint
-          chmod +x cpilint/cpilint-1.1.0/bin/cpilint
-          echo "$GITHUB_WORKSPACE/cpilint/cpilint-1.1.0/bin" >> $GITHUB_PATH
-  
-      - name: Run CPILint
-        #continue-on-error: true
-        run: |
-          ./cpilint/cpilint-1.1.0/bin/cpilint \
-          -rules ./cpilint.xml \
-          -directory "${DOWNLOAD_DIR}/IFlow/current"
-      - name: Upload CPI Lint Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpilint-report
-          path: |
-            cpilint*.*
-          if-no-files-found: ignore
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: ${{ env.JAVA_VERSION }}
+
+    - name: Cache CPILint
+      id: cpilint-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CPILINT_HOME }}
+        key: cpilint-${{ env.CPILINT_VERSION }}
+
+    - name: Download CPILint
+      if: steps.cpilint-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        wget -q https://github.com/mwittrock/cpilint/releases/download/v${CPILINT_VERSION}/cpilint-${CPILINT_VERSION}.zip
+
+        unzip -q cpilint-${CPILINT_VERSION}.zip -d "${CPILINT_HOME}"
+
+        chmod +x "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin/cpilint"
+
+    - name: Add CPILint to PATH
+      run: |
+        echo "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin" >> "$GITHUB_PATH"
+
+    - name: Validate Inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        test -f cpilint.xml || {
+          echo "cpilint.xml not found"
+          exit 1
+        }
+
+        test -d "${IFLOW_DIRECTORY}" || {
+          echo "IFlow directory not found: ${IFLOW_DIRECTORY}"
+          exit 1
+        }
+
+    - name: Run CPILint
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        cpilint \
+          -rules cpilint.xml \
+          -directory "${IFLOW_DIRECTORY}"
+
+    - name: Upload CPILint Reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cpilint-report
+        path: |
+          cpilint.xml
+          *.html
+          *.xml
+          *.log
+        if-no-files-found: ignore
+        retention-days: 7
 # =====================================================
 # JOB 3 - Create PR
 # =====================================================
