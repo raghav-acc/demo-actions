@@ -315,7 +315,11 @@ jobs:
           wget -q https://github.com/mwittrock/cpilint/releases/download/v${CPILINT_VERSION}/cpilint-${CPILINT_VERSION}.zip
           unzip -q cpilint-${CPILINT_VERSION}.zip -d "${CPILINT_HOME}"
           chmod +x "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin/cpilint"
-
+          
+      - name: Verify CPILint Installation
+        run: |
+          pwd
+          ls -R cpilint
       - name: Add CPILint to PATH
         run: |
           echo "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin" >> "$GITHUB_PATH"
