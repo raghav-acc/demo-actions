@@ -316,10 +316,7 @@ jobs:
           unzip -q cpilint-${CPILINT_VERSION}.zip -d "${CPILINT_HOME}"
           chmod +x "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin/cpilint"
           
-      - name: Verify CPILint Installation
-        run: |
-          pwd
-          ls -R cpilint
+
       - name: Add CPILint to PATH
         run: |
           echo "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin" >> "$GITHUB_PATH"
@@ -330,7 +327,9 @@ jobs:
           set -euo pipefail
           test -f cpilint.xml
           test -d "${IFLOW_DIRECTORY}"
-
+      - name: Inspect CPILint launcher
+        run: |
+          cat cpilint/cpilint-1.1.0/bin/cpilint
       - name: Run CPILint
         shell: bash
         run: |
