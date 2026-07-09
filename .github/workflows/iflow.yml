@@ -284,7 +284,7 @@ jobs:
     env:
       JAVA_VERSION: "17"
       CPILINT_VERSION: "1.1.0"
-      CPILINT_HOME: ${{ github.workspace }}/cpilint
+      CPILINT_HOME: ${{ github.workspace }}/cpilint/cpilint-${{ env.CPILINT_VERSION }}
       IFLOW_DIRECTORY: btp-iflows/IFlow_Demo
 
     steps:
