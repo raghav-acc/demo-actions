@@ -285,7 +285,7 @@ jobs:
       JAVA_VERSION: "17"
       CPILINT_VERSION: "1.1.0"
       CPILINT_HOME: ${{ github.workspace }}/cpilint
-      IFLOW_DIRECTORY: btp-iflows/IFlow/current
+      IFLOW_DIRECTORY: btp-iflows/IFlow_Demo
 
     steps:
       - name: Checkout Repository
