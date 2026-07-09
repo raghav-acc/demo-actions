@@ -436,36 +436,36 @@ jobs:
     needs: download-ready-iflows
     timeout-minutes: 10
 
-  env:
-    JAVA_VERSION: "17"
-    CPILINT_VERSION: "1.1.0"
-    CPILINT_HOME: ${{ github.workspace }}/cpilint
-    IFLOW_DIRECTORY: ${{ env.DOWNLOAD_DIR }}/IFlow/current
+    env:
+      JAVA_VERSION: "17"
+      CPILINT_VERSION: "1.1.0"
+      CPILINT_HOME: ${{ github.workspace }}/cpilint
+      IFLOW_DIRECTORY: ${{ env.DOWNLOAD_DIR }}/IFlow/current
 
-  steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      with:
+   steps:
+     - name: Checkout Repository
+       uses: actions/checkout@v4
+       with:
         fetch-depth: 0
         ref: ${{ github.event.inputs.target_branch || env.DEFAULT_TARGET_BRANCH }}
 
-    - name: Setup Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: ${{ env.JAVA_VERSION }}
+     - name: Setup Java
+       uses: actions/setup-java@v4
+       with:
+         distribution: temurin
+         java-version: ${{ env.JAVA_VERSION }}
 
-    - name: Cache CPILint
-      id: cpilint-cache
-      uses: actions/cache@v4
-      with:
+     - name: Cache CPILint
+       id: cpilint-cache
+       uses: actions/cache@v4
+       with:
         path: ${{ env.CPILINT_HOME }}
         key: cpilint-${{ env.CPILINT_VERSION }}
 
-    - name: Download CPILint
-      if: steps.cpilint-cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
+     - name: Download CPILint
+       if: steps.cpilint-cache.outputs.cache-hit != 'true'
+       shell: bash
+       run: |
         set -euo pipefail
 
         wget -q https://github.com/mwittrock/cpilint/releases/download/v${CPILINT_VERSION}/cpilint-${CPILINT_VERSION}.zip
@@ -474,13 +474,13 @@ jobs:
 
         chmod +x "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin/cpilint"
 
-    - name: Add CPILint to PATH
-      run: |
+     - name: Add CPILint to PATH
+       run: |
         echo "${CPILINT_HOME}/cpilint-${CPILINT_VERSION}/bin" >> "$GITHUB_PATH"
 
-    - name: Validate Inputs
-      shell: bash
-      run: |
+     - name: Validate Inputs
+       shell: bash
+       run: |
         set -euo pipefail
 
         test -f cpilint.xml || {
@@ -493,19 +493,19 @@ jobs:
           exit 1
         }
 
-    - name: Run CPILint
-      shell: bash
-      run: |
+     - name: Run CPILint
+       shell: bash
+       run: |
         set -euo pipefail
 
         cpilint \
           -rules cpilint.xml \
           -directory "${IFLOW_DIRECTORY}"
 
-    - name: Upload CPILint Reports
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
+     - name: Upload CPILint Reports
+       if: always()
+       uses: actions/upload-artifact@v4
+       with:
         name: cpilint-report
         path: |
           cpilint.xml
