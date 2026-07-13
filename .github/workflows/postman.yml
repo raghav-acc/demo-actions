@@ -359,7 +359,7 @@ jobs:
     timeout-minutes: 10
 
     env:
-      POSTMAN_DIRECTORY: TestScripts
+      POSTMAN_DIRECTORY: postman
 
     steps:
       - name: Checkout Repository
