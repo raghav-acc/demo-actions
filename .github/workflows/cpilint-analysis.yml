@@ -1,108 +1,115 @@
-name: CPILint Analysis
-
+name: Download iFlows to Repo
 on:
   workflow_dispatch:
-
-env:
-  CPILINT_VERSION: "1.1.0"
-
 jobs:
-  cpilint-analysis:
+  download-iflows:
     runs-on: windows-latest
+    env:
+      BTP_CLIENT_ID: ${{ secrets.BTP_CLIENT_ID }}
+      BTP_CLIENT_SECRET: ${{ secrets.BTP_CLIENT_SECRET }}
+      BTP_AUTH_URL: ${{ secrets.BTP_AUTH_URL }}
+      BTP_BASE_URL: ${{ secrets.BTP_BASE_URL }}
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      # Download artifact from previous workflow
-      - name: Download iFlow ZIPs
-        uses: actions/download-artifact@v4
-        with:
-          name: downloaded-iflows
-          path: downloads
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Download CPILint
+      - name: Get OAuth Token
         shell: powershell
         run: |
-          $version = "${env:CPILINT_VERSION}"
-          $url = "https://github.com/mwittrock/cpilint/releases/download/v$version/cpilint-$version.zip"
+            $body = @{
+            grant_type    = 'client_credentials'
+            client_id     = "${env:BTP_CLIENT_ID}"
+            client_secret = "${env:BTP_CLIENT_SECRET}"
+            }
+            $res = Invoke-RestMethod `
+            -Method Post `
+            -Uri "${env:BTP_AUTH_URL}" `
+            -ContentType "application/x-www-form-urlencoded" `
+            -Body $body
+            "BTP_TOKEN=$($res.access_token)" >> $env:GITHUB_ENV
+      - name: List Recent iFlows
+        shell: powershell
+        run: |
+          $Hours = 12
+          $OutFile = "recent_iflows.json"
+          $headers = @{
+          Authorization = "Bearer $env:BTP_TOKEN"
+          Accept        = "application/json"
+          }
+          $items = Invoke-RestMethod `
+          -Uri "$env:BTP_BASE_URL/api/v1/IntegrationRuntimeArtifacts?`$format=json" `
+          -Headers $headers
+          $cutUtc = (Get-Date).ToUniversalTime().AddHours(-$Hours)
+          $recent = foreach ($i in $items.d.results) {
+          if ($i.Status -ne "Started") { continue }
+          try {
+          $dt = [datetime]::Parse($i.DeployedOn)
+          }
+          catch {
+          continue
+          }
+          if ($dt -ge $cutUtc) {
+          [pscustomobject]@{
+            Id      = $i.Id
+            Version = $i.Version
+          }
+          }
+          }
 
-          New-Item -ItemType Directory -Force -Path cpilint | Out-Null
+          $recent | ConvertTo-Json -Depth 5 | Set-Content $OutFile
 
+      - name: Download iFlows
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path iflow
+          $rows = Get-Content recent_iflows.json -Raw | ConvertFrom-Json
+          foreach ($r in $rows) {
+          $headers = @{
+          Authorization = "Bearer $env:BTP_TOKEN"
+          Accept        = "application/zip"
+          }
+          $uri = "$env:BTP_BASE_URL/api/v1/IntegrationDesigntimeArtifacts(Id='$($r.Id)',Version='$($r.Version)')/`$value"
+          $zip = "iflow\$($r.Id)_$($r.Version).zip"
+          Write-Host "Downloading $($r.Id)"
           Invoke-WebRequest `
-            -Uri $url `
-            -OutFile cpilint.zip
+          -Uri $uri `
+          -Headers $headers `
+          -OutFile $zip
+            }
 
-          Expand-Archive `
-            -Path cpilint.zip `
-            -DestinationPath cpilint `
-            -Force
-
-          Write-Host "CPILint installed"
-
-      - name: Extract iFlow ZIPs
+      - name: Commit Downloaded iFlows
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path temp_iflows | Out-Null
-
-          $zips = Get-ChildItem downloads -Filter *.zip
-
-          if ($zips.Count -eq 0) {
-            Write-Host "No ZIP files found."
-            exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add iflow/
+          git diff --staged --quiet
+          if ($LASTEXITCODE -eq 0) {
+          Write-Host "No changes to commit"
+          exit 0
           }
+          git commit -m "Downloaded latest iFlows"
+          git push
 
-          foreach ($zip in $zips) {
-            $target = Join-Path "temp_iflows" $zip.BaseName
-
-            New-Item -ItemType Directory -Force -Path $target | Out-Null
-
-            Expand-Archive `
-              -LiteralPath $zip.FullName `
-              -DestinationPath $target `
-              -Force
-          }
-
-      - name: Run CPILint Analysis
+      - name: Save Workflow Log
         shell: powershell
         run: |
-          $cpilintRoot = Get-ChildItem cpilint -Directory | Select-Object -First 1
-          $cpilintDir = $cpilintRoot.FullName
-
-          $classpath = "$cpilintDir\lib\*;$cpilintDir\logback"
-          $rulesFile = "$cpilintDir\samples\naming.xml"
-
-          New-Item -ItemType Directory -Force -Path cpilint-results | Out-Null
-
-          $iflowDirs = Get-ChildItem temp_iflows -Directory
-
-          foreach ($dir in $iflowDirs) {
-
-            $iflowName = $dir.Name
-
-            Write-Host "Analyzing $iflowName"
-
-            $cmd = "java -classpath `"$classpath`" org.cpilint.CliClient -rules `"$rulesFile`" -unpacked-files `"$($dir.FullName)`" -boring"
-
-            $output = cmd /c $cmd 2>&1
-
-            $resultFile = "cpilint-results\$iflowName-result.txt"
-
-            $output | Out-File `
-              -FilePath $resultFile `
-              -Encoding utf8
-
-            Write-Host $output
-          }
-
-      - name: Upload CPILint Results
-        uses: actions/upload-artifact@v4
+          Get-ChildItem iflow | Out-File workflow-log.txt
+      - name: Send Workflow Status Email
+        if: always()
+        uses: dawidd6/action-send-mail@v3
         with:
-          name: cpilint-results
-          path: cpilint-results
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "SAP CPI iFlow Download - ${{ job.status }}"
+          to: ${{ secrets.EMAIL_TO }}
+          from: GitHub Actions
+          body: |
+            Status: ${{ job.status }}
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            View complete logs:
+            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
