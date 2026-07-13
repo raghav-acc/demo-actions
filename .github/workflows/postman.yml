@@ -362,57 +362,31 @@ jobs:
       POSTMAN_DIRECTORY: postman
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           ref: ${{ env.TARGET_BRANCH }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install Newman
-        run: |
-          npm install -g newman newman-reporter-junitfull
+        run: npm install -g newman newman-reporter-junitfull
 
-      - name: Detect iFlow Name
-        id: iflow
-        shell: bash
+      - name: Find iFlow & Verify Collection
         run: |
           set -euo pipefail
-
-          IFLOW_NAME=$(find btp-iflows -mindepth 1 -maxdepth 1 -type d | head -n 1 | xargs basename)
-
-          echo "Detected iFlow: $IFLOW_NAME"
-
-          echo "IFLOW_NAME=$IFLOW_NAME" >> "$GITHUB_ENV"
-          echo "iflow_name=$IFLOW_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Postman Collection
-        id: postmanCheck
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          COLLECTION_FILE="${IFLOW_NAME}.postman_collection.json"
-          COLLECTION_PATH="${POSTMAN_DIRECTORY}/${COLLECTION_FILE}"
-
-          echo "iFlow Name      : ${IFLOW_NAME}"
-          echo "Collection File : ${COLLECTION_FILE}"
-
-          if [ ! -f "${COLLECTION_PATH}" ]; then
-            echo "::error::Postman collection '${COLLECTION_FILE}' not found."
+          IFLOW_NAME=$(find btp-iflows -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | head -1)
+          COLLECTION_PATH="${POSTMAN_DIRECTORY}/${IFLOW_NAME}.postman_collection.json"
+          echo "iFlow: $IFLOW_NAME"
+          [[ -f "$COLLECTION_PATH" ]] || {
+            echo "::error::Postman collection not found: ${IFLOW_NAME}.postman_collection.json"
             exit 1
-          fi
+            }
 
-          echo "Collection found."
+            echo "COLLECTION_PATH=$COLLECTION_PATH" >> "$GITHUB_ENV"
 
-          echo "COLLECTION_PATH=${COLLECTION_PATH}" >> "$GITHUB_ENV"
-
-      - name: Execute Postman Collection
-        shell: bash
+      - name: Run Postman Tests
         env:
           CPI_HOST: ${{ secrets.CPI_HOST }}
           CPI_USERNAME: ${{ secrets.CPI_USERNAME }}
@@ -427,11 +401,9 @@ jobs:
             --reporters cli,junitfull \
             --reporter-junitfull-export reports/postman-report.xml
 
-      - name: Upload Postman Report
+      - name: Upload Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: postman-report
           path: reports/postman-report.xml
-          if-no-files-found: ignore
-          retention-days: 7          
