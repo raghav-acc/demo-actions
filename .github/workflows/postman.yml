@@ -370,6 +370,14 @@ jobs:
         with:
           node-version: 20
 
+      - name: Debug Variables
+        env:
+          CPI_HOST: ${{ secrets.CPI_HOST }}
+          CPI_USERNAME: ${{ secrets.CPI_USERNAME }}
+        run: |
+          echo "Host: $CPI_HOST"
+          echo "Username: $CPI_USERNAME"     
+
       - name: Install Newman
         run: npm install -g newman newman-reporter-junitfull
 
