@@ -1,0 +1,62 @@
+name: Postman iFlow Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      iflow_name:
+        description: "Name of the deployed iFlow"
+        required: true
+
+jobs:
+  postman-test:
+    runs-on: ubuntu-latest
+
+    env:
+      POSTMAN_DIR: postman
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Newman
+        run: |
+          npm install -g newman newman-reporter-junitfull
+
+      - name: Find Postman Collection
+        run: |
+          COLLECTION="${POSTMAN_DIR}/${{ github.event.inputs.iflow_name }}.postman_collection.json"
+
+          if [ ! -f "$COLLECTION" ]; then
+            echo "Collection not found: $COLLECTION"
+            exit 1
+          fi
+
+          echo "COLLECTION=$COLLECTION" >> $GITHUB_ENV
+
+      - name: Execute Postman Tests
+        env:
+          CPI_HOST: ${{ secrets.CPI_HOST }}
+          CPI_USERNAME: ${{ secrets.CPI_USERNAME }}
+          CPI_PASSWORD: ${{ secrets.CPI_PASSWORD }}
+        run: |
+          mkdir -p reports
+
+          newman run "$COLLECTION" \
+            -e postman/DEV.postman_environment.json \
+            --env-var host="$CPI_HOST" \
+            --env-var username="$CPI_USERNAME" \
+            --env-var password="$CPI_PASSWORD" \
+            --reporters cli,junitfull \
+            --reporter-junitfull-export reports/postman-report.xml
+
+      - name: Upload Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postman-report
+          path: reports/
