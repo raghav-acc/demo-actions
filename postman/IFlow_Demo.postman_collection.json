@@ -71,7 +71,7 @@
   "variable": [
     {
       "key": "host",
-      "value": "https://your-tenant.it-cpi001.cfapps.eu10.hana.ondemand.com"
+      "value": "https://ac87869btrial.it-cpitrial03.cfapps.ap21.hana.ondemand.com"
     },
     {
       "key": "username",
