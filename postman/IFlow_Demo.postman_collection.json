@@ -1,6 +1,74 @@
-console.log("Status:", pm.response.code);
-console.log("Body:", pm.response.text());
-
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
-});
+{
+  "info": {
+    "_postman_id": "8a5f8e53-1111-4444-9999-abcdef123456",
+    "name": "IFlow_Demo",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Invoke IFlow",
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{username}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{password}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message\": \"Hello from Newman\"\n}"
+        },
+        "url": {
+          "raw": "{{host}}/http/IFlow_Demo",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "http",
+            "IFlow_Demo"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "console.log('Status:', pm.response.code);",
+              "console.log('Response:', pm.response.text());",
+              "",
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response time is less than 5 seconds', function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+              "});",
+              "",
+              "pm.test('Response body is not empty', function () {",
+              "    pm.expect(pm.response.text()).to.not.be.empty;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    }
+  ]
+}
