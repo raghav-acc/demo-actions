@@ -15,19 +15,12 @@ env:
   POSTMAN_DIRECTORY: postman
 
 jobs:
-  postman-validation:
+  postman-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
-      - name: Checkout Main Branch
+      - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Checkout iFlow Feature Branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.IFLOW_BRANCH }}
-          path: iflows
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,45 +35,24 @@ jobs:
       - name: Create Reports Folder
         run: mkdir -p reports
 
-      - name: Execute Postman Collections
-        env:
-          CPI_HOST: ${{ secrets.CPI_HOST }}
-          CPI_USERNAME: ${{ secrets.CPI_USERNAME }}
-          CPI_PASSWORD: ${{ secrets.CPI_PASSWORD }}
+      - name: Run All Postman Collections
         run: |
+          shopt -s nullglob
 
-          COLLECTION_DIR="iflows/${POSTMAN_DIRECTORY}"
-
-          if [ ! -d "$COLLECTION_DIR" ]; then
-            echo "No Postman directory found."
-            exit 1
-          fi
-
-          for collection in "$COLLECTION_DIR"/*.postman_collection.json
+          for collection in ${POSTMAN_DIRECTORY}/*.postman_collection.json
           do
-            if [ ! -f "$collection" ]; then
-              echo "No Postman collections found."
-              exit 1
-            fi
+            name=$(basename "$collection" .postman_collection.json)
 
-            NAME=$(basename "$collection" .postman_collection.json)
-
-            echo "==================================="
-            echo "Running collection: $NAME"
-            echo "==================================="
+            echo "Running $name"
 
             newman run "$collection" \
-              --env-var host="$CPI_HOST" \
-              --env-var username="$CPI_USERNAME" \
-              --env-var password="$CPI_PASSWORD" \
               -r cli,junitfull \
-              --reporter-junitfull-export "reports/${NAME}.xml"
-
+              --reporter-junitfull-export reports/${name}.xml
           done
 
-      - name: Upload Newman Reports
+      - name: Upload Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: postman-test-results
+          name: postman-reports
           path: reports
