@@ -1,417 +1,86 @@
-name: Download ReadyForDeployment iFlows from SAP BTP
+name: Postman Validation for iFlows
 
 on:
   workflow_dispatch:
-
-    # NOTE: Cron only works when this workflow file is in the default branch (main)
-    #  schedule:
-    # Runs twice daily at 09:00 IST and 18:00 IST (UTC cron)
-    # - cron: "30 3,12 * * *"
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: write
-
-concurrency:
-  group: download-ready-iflows-feature
-  cancel-in-progress: false
+  contents: read
 
 env:
-  TARGET_BRANCH: feature
-  DEPLOYMENT_MARKER: ReadyForDeployment
-  DOWNLOAD_DIR: btp-iflows
-  EXTRACT_ZIP: "true"
-  VERSION_REGEX: '^[0-9]+\.[0-9]+\.[0-9]+\.ReadyForDeployment$'
+  IFLOW_BRANCH: feature
+  IFLOW_DIRECTORY: btp-iflows
+  POSTMAN_DIRECTORY: postman
 
 jobs:
-  download-ready-iflows:
-    name: Download X.Y.Z.ReadyForDeployment iFlows from SAP CPI
+  postman-validation:
     runs-on: ubuntu-latest
-    environment: dev
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout target branch
+      - name: Checkout Main Branch
+        uses: actions/checkout@v4
+
+      - name: Checkout iFlow Feature Branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TARGET_BRANCH }}
-          fetch-depth: 0
+          ref: ${{ env.IFLOW_BRANCH }}
+          path: iflows
 
-      - name: Validate configuration and secrets
-        shell: bash
-        env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-        run: |
-          set -euo pipefail
-          echo "Configuration"
-          echo "Trigger           : ${{ github.event_name }}"
-          echo "Target branch     : $TARGET_BRANCH"
-          echo "Deployment marker : $DEPLOYMENT_MARKER"
-          echo "Download dir      : $DOWNLOAD_DIR"
-          echo "Version format    : X.Y.Z.$DEPLOYMENT_MARKER (case-sensitive)"
-          check_secret() {
-            local name="$1" value="$2" prefix="${3:-}"
-            if [ -z "${value:-}" ]; then
-              echo "ERROR: $name is missing or empty."
-              exit 1
-            fi
-            if [ -n "$prefix" ] && [ "${value#$prefix}" = "$value" ]; then
-              echo "ERROR: $name must start with $prefix"
-              exit 1
-            fi
-          }
-          check_secret "SAP_BTP_TOKEN_URL" "$SAP_BTP_TOKEN_URL" "https://"
-          check_secret "SAP_BTP_OAUTH_CLIENT_ID" "$SAP_BTP_OAUTH_CLIENT_ID"
-          check_secret "SAP_BTP_OAUTH_CLIENT_SECRET" "$SAP_BTP_OAUTH_CLIENT_SECRET"
-          check_secret "SAP_CPI_API_BASE_URL" "$SAP_CPI_API_BASE_URL" "https://"
-          echo "All secrets validated."
-      - name: Setup Git
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          echo "Git configured. On branch: $TARGET_BRANCH"
-      - name: Get SAP BTP OAuth token
-        shell: bash
-        env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-          TOKEN_URL="${SAP_BTP_TOKEN_URL%/}"
-          [ "${TOKEN_URL%/oauth/token}" = "$TOKEN_URL" ] && TOKEN_URL="$TOKEN_URL/oauth/token"
-          echo "Requesting SAP OAuth token..."
-          RESPONSE=$(curl -sS \
-            -w "\nHTTP_CODE=%{http_code}" \
-            -X POST "$TOKEN_URL" \
-            -u "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials")
-          HTTP_CODE=$(echo "$RESPONSE" | sed -n 's/^HTTP_CODE=//p')
-          BODY=$(echo "$RESPONSE" | sed '/^HTTP_CODE=/d')
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Token request failed (HTTP $HTTP_CODE)"
-            echo "$BODY"
-            exit 1
-          fi
-          TOKEN=$(echo "$BODY" | jq -r '.access_token // empty')
-          [ -z "$TOKEN" ] && { echo "No access_token in response"; exit 1; }
-          echo "::add-mask::$TOKEN"
-          echo "SAP_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-          echo "Token obtained."
-      - name: Discover matching iFlows from SAP CPI
-        shell: bash
-        env:
-          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-        run: |
-          set -euo pipefail
-          API_BASE="${SAP_CPI_API_BASE_URL%/}"
-          mkdir -p "$DOWNLOAD_DIR"
-          cpi_get() {
-            local url="$1" output="$2"
-            curl -sS -w "%{http_code}" \
-              -X GET "$url" \
-              -H "Authorization: Bearer $SAP_ACCESS_TOKEN" \
-              -H "Accept: application/json" \
-              -o "$output"
-          }
-          echo "Fetching IntegrationPackages..."
-          HTTP_CODE=$(cpi_get "$API_BASE/api/v1/IntegrationPackages?\$format=json" packages.json)
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Failed to fetch packages (HTTP $HTTP_CODE)"
-            cat packages.json
-            exit 1
-          fi
-          echo '{"d":{"results":[]}}' > all-artifacts.json
-          jq -r '.d.results[]?.Id' packages.json | while read -r PKG_ID; do
-            [ -z "$PKG_ID" ] || [ "$PKG_ID" = "null" ] && continue
-            ODATA_PKG_ID=$(printf "%s" "$PKG_ID" | sed "s/'/''/g")
-            PKG_FILE="pkg-$(echo "$PKG_ID" | tr -cd '[:alnum:]_.-').json"
-            HTTP_CODE=$(cpi_get \
-              "$API_BASE/api/v1/IntegrationPackages('$ODATA_PKG_ID')/IntegrationDesigntimeArtifacts?\$format=json" \
-              "$PKG_FILE")
-            if [ "$HTTP_CODE" = "200" ]; then
-              jq -s '{d:{results:((.[0].d.results // []) + (.[1].d.results // []))}}' \
-                all-artifacts.json "$PKG_FILE" > merged.json
-              mv merged.json all-artifacts.json
-              echo "$PKG_ID"
-            else
-              echo "Skipped $PKG_ID (HTTP $HTTP_CODE)"
-            fi
-          done
-          TOTAL=$(jq '.d.results | length' all-artifacts.json)
-          echo "Total artifacts discovered: $TOTAL"
-          echo "Version field types (for debugging):"
-          jq -r '.d.results[] | "  \(.Id // "unknown"): Version=\(.Version // "null") (type: \(.Version | type))"' all-artifacts.json
-          # Type-safe filter: only apply regex to string versions
-          jq --arg pattern "$VERSION_REGEX" '
-            [.d.results[]
-              | select(
-                  .Id != null
-                  and (.Version | type == "string")
-                  and (.Version | test($pattern))
-                )
-              | {
-                  id: .Id,
-                  packageId: .PackageId,
-                  savedVersion: .Version
-                }
-            ]
-          ' all-artifacts.json > selected-iflows.json
-          MATCHED=$(jq length selected-iflows.json)
-          echo "iFlows matching X.Y.Z.$DEPLOYMENT_MARKER: $MATCHED"
-          jq -r '.[] | "\(.id) | \(.packageId) | v\(.savedVersion)"' selected-iflows.json
-          if [ "$MATCHED" -eq 0 ]; then
-            echo "::notice title=No matching iFlows::No iFlows found with version X.Y.Z.$DEPLOYMENT_MARKER"
-            echo "SKIP_DOWNLOAD=true" >> "$GITHUB_ENV"
-          fi
-      - name: Filter out already downloaded iFlows
-        if: env.SKIP_DOWNLOAD != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq -c '.[]' selected-iflows.json > items.txt
-          echo "[]" > new-iflows.json
-          NEW_COUNT=0
-          EXISTING_COUNT=0
-          while IFS= read -r item; do
-            IFLOW_ID=$(echo "$item" | jq -r '.id')
-            VERSION=$(echo "$item" | jq -r '.savedVersion')
-            SAFE_ID=$(echo "$IFLOW_ID" | tr -cd '[:alnum:]_.-')
-            SAFE_VER=$(echo "$VERSION" | tr -cd '[:alnum:]_.-')
-            if [ -f "$DOWNLOAD_DIR/$SAFE_ID/$SAFE_VER/${SAFE_ID}_${SAFE_VER}.zip" ]; then
-              echo "Already exists: $IFLOW_ID v$VERSION"
-              EXISTING_COUNT=$((EXISTING_COUNT + 1))
-            else
-              echo "New: $IFLOW_ID v$VERSION"
-              echo "$item" | jq -s '.' | jq -s '.[0] + .[1]' new-iflows.json - > tmp.json
-              mv tmp.json new-iflows.json
-              NEW_COUNT=$((NEW_COUNT + 1))
-            fi
-          done < items.txt
-          mv new-iflows.json selected-iflows.json
-          echo "Existing: $EXISTING_COUNT | New: $NEW_COUNT"
-          if [ "$NEW_COUNT" -eq 0 ]; then
-            echo "::notice title=No new iFlows::All discovered iFlows already exist in the branch."
-            echo "SKIP_DOWNLOAD=true" >> "$GITHUB_ENV"
-          fi
-      - name: Download new iFlows from SAP CPI
-        if: env.SKIP_DOWNLOAD != 'true'
-        shell: bash
-        env:
-          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-        run: |
-          set -euo pipefail
-          API_BASE="${SAP_CPI_API_BASE_URL%/}"
-          jq -c '.[]' selected-iflows.json | while read -r item; do
-            IFLOW_ID=$(echo "$item" | jq -r '.id')
-            VERSION=$(echo "$item" | jq -r '.savedVersion')
-            SAFE_ID=$(echo "$IFLOW_ID" | tr -cd '[:alnum:]_.-')
-            SAFE_VER=$(echo "$VERSION" | tr -cd '[:alnum:]_.-')
-            TARGET_PATH="$DOWNLOAD_DIR/$SAFE_ID/$SAFE_VER"
-            ZIP_FILE="$TARGET_PATH/${SAFE_ID}_${SAFE_VER}.zip"
-            mkdir -p "$TARGET_PATH"
-            ODATA_ID=$(printf "%s" "$IFLOW_ID" | sed "s/'/''/g")
-            ODATA_VER=$(printf "%s" "$VERSION" | sed "s/'/''/g")
-            URL="$API_BASE/api/v1/IntegrationDesigntimeArtifacts(Id='$ODATA_ID',Version='$ODATA_VER')/\$value"
-            echo "$IFLOW_ID | v$VERSION"
-            HTTP_CODE=$(curl -sS \
-              --connect-timeout 10 \
-              --max-time 90 \
-              -w "%{http_code}" \
-              -X GET "$URL" \
-              -H "Authorization: Bearer $SAP_ACCESS_TOKEN" \
-              -H "Accept: application/zip" \
-              -o "$ZIP_FILE")
-            if [ "$HTTP_CODE" = "200" ] && [ -s "$ZIP_FILE" ]; then
-              echo "Downloaded ($HTTP_CODE)"
-              if [ "$EXTRACT_ZIP" = "true" ]; then
-                EXTRACT_PATH="$TARGET_PATH/extracted"
-                rm -rf "$EXTRACT_PATH"
-                mkdir -p "$EXTRACT_PATH"
-                if unzip -tq "$ZIP_FILE" >/dev/null 2>&1; then
-                  unzip -q "$ZIP_FILE" -d "$EXTRACT_PATH"
-                  echo "Extracted"
-                else
-                  echo "Invalid ZIP, keeping raw file only"
-                fi
-              fi
-            else
-              echo "Failed (HTTP $HTTP_CODE)"
-              rm -f "$ZIP_FILE"
-              rmdir "$TARGET_PATH" 2>/dev/null || true
-            fi
-          done
-          echo "Total ZIPs in $DOWNLOAD_DIR: $(find "$DOWNLOAD_DIR" -name "*.zip" | wc -l)"
-      - name: Commit and push downloaded iFlows
-        if: env.SKIP_DOWNLOAD != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add "$DOWNLOAD_DIR"
-          if git diff --staged --quiet; then
-            echo "::notice title=Nothing to commit::No new files were staged."
-            exit 0
-          fi
-          git commit -m "Download SAP BTP iFlows (X.Y.Z.$DEPLOYMENT_MARKER)"
-          git fetch origin "$TARGET_BRANCH"
-          if ! git pull --rebase origin "$TARGET_BRANCH"; then
-            echo "Rebase conflict detected"
-            git rebase --abort || true
-            echo "Cannot push safely. Please resolve conflicts manually."
-            exit 1
-          fi
-          git push origin "$TARGET_BRANCH"
-          echo "Pushed to branch: $TARGET_BRANCH"
-      - name: Report clean run
-        if: env.SKIP_DOWNLOAD == 'true'
-        shell: bash
-        run: |
-          echo "::notice title=Success::All iFlows are already downloaded. Nothing new."
-          echo "Pipeline status: SUCCESS"
-# =====================================================
-# JOB 2 - CPI Lint Validation
-# =====================================================
-  cpilint-check:
-    name: CPI Lint Validation
-    runs-on: ubuntu-latest
-    needs: download-ready-iflows
-    timeout-minutes: 10
-
-    env:
-      JAVA_VERSION: "17"
-      CPILINT_VERSION: "1.1.0"
-      IFLOW_DIRECTORY: btp-iflows/IFlow_Demo/1.0.7.ReadyForDeployment/
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ env.TARGET_BRANCH }}
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Cache CPILint
-        id: cpilint-cache
-        uses: actions/cache@v4
-        with:
-          path: cpilint
-          key: cpilint-${{ env.CPILINT_VERSION }}
-
-      - name: Download CPILint
-        if: steps.cpilint-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p cpilint
-          wget -q https://github.com/mwittrock/cpilint/releases/download/v${CPILINT_VERSION}/cpilint-${CPILINT_VERSION}.zip
-          unzip -q cpilint-${CPILINT_VERSION}.zip -d cpilint
-          chmod +x cpilint/cpilint-${CPILINT_VERSION}/bin/cpilint
-      - name: Verify CPILint Installation
-        shell: bash
-        run: |
-          set -euo pipefail
-          ls -R cpilint
-      - name: Validate Inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f cpilint.xml
-          test -d "${IFLOW_DIRECTORY}"
-          echo "IFlow Directory:"
-          ls -R "${IFLOW_DIRECTORY}"
-      - name: Run CPILint
-        shell: bash
-        run: |
-          set -euo pipefail
-          export CPILINT_HOME="${GITHUB_WORKSPACE}/cpilint/cpilint-${CPILINT_VERSION}"
-          echo "CPILINT_HOME=$CPILINT_HOME"
-          "$CPILINT_HOME/bin/cpilint" \
-          -rules cpilint.xml \
-          -directory "${IFLOW_DIRECTORY}"
-      - name: Upload CPILint Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpilint-report
-          path: |
-            **/*.html
-            **/*.xml
-            **/*.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-# =====================================================
-# JOB 3 - Postman Testing
-# =====================================================
-  postman-test:
-    name: Postman Testing
-    runs-on: ubuntu-latest
-    needs: cpilint-check
-    timeout-minutes: 10
-
-    env:
-      POSTMAN_DIRECTORY: postman
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TARGET_BRANCH }}
-
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Debug Variables
-        env:
-          CPI_HOST: ${{ secrets.CPI_HOST }}
-          CPI_USERNAME: ${{ secrets.CPI_USERNAME }}
-        run: |
-          echo "Host: $CPI_HOST"
-          echo "Username: $CPI_USERNAME"     
-
       - name: Install Newman
-        run: npm install -g newman newman-reporter-junitfull
-
-      - name: Find iFlow & Verify Collection
         run: |
-          set -euo pipefail
-          IFLOW_NAME=$(find btp-iflows -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | head -1)
-          COLLECTION_PATH="${POSTMAN_DIRECTORY}/${IFLOW_NAME}.postman_collection.json"
-          echo "iFlow: $IFLOW_NAME"
-          [[ -f "$COLLECTION_PATH" ]] || {
-            echo "::error::Postman collection not found: ${IFLOW_NAME}.postman_collection.json"
-            exit 1
-            }
+          npm install -g newman
+          npm install -g newman-reporter-junitfull
 
-            echo "COLLECTION_PATH=$COLLECTION_PATH" >> "$GITHUB_ENV"
+      - name: Create Reports Folder
+        run: mkdir -p reports
 
-      - name: Run Postman Tests
+      - name: Execute Postman Collections
         env:
           CPI_HOST: ${{ secrets.CPI_HOST }}
           CPI_USERNAME: ${{ secrets.CPI_USERNAME }}
           CPI_PASSWORD: ${{ secrets.CPI_PASSWORD }}
         run: |
-          mkdir -p reports
 
-          newman run "$COLLECTION_PATH" \
-            --env-var host="$CPI_HOST" \
-            --env-var username="$CPI_USERNAME" \
-            --env-var password="$CPI_PASSWORD" \
-            --reporters cli,junitfull \
-            --reporter-junitfull-export reports/postman-report.xml
+          COLLECTION_DIR="iflows/${POSTMAN_DIRECTORY}"
 
-      - name: Upload Report
+          if [ ! -d "$COLLECTION_DIR" ]; then
+            echo "No Postman directory found."
+            exit 1
+          fi
+
+          for collection in "$COLLECTION_DIR"/*.postman_collection.json
+          do
+            if [ ! -f "$collection" ]; then
+              echo "No Postman collections found."
+              exit 1
+            fi
+
+            NAME=$(basename "$collection" .postman_collection.json)
+
+            echo "==================================="
+            echo "Running collection: $NAME"
+            echo "==================================="
+
+            newman run "$collection" \
+              --env-var host="$CPI_HOST" \
+              --env-var username="$CPI_USERNAME" \
+              --env-var password="$CPI_PASSWORD" \
+              -r cli,junitfull \
+              --reporter-junitfull-export "reports/${NAME}.xml"
+
+          done
+
+      - name: Upload Newman Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: postman-report
-          path: reports/postman-report.xml
+          name: postman-test-results
+          path: reports
