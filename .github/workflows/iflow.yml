@@ -479,7 +479,7 @@ jobs:
               --add-reviewer "${{ secrets.REVIEWER_2 }}" \
                2>/dev/null || echo "::warning::Could not request reviewers"
             # Enable auto-merge - waits until BOTH approvals satisfied
-            gh pr merge "$PR_NUMBER" --auto --squash --delete-branch 2>/dev/null \
+            gh pr merge "$PR_NUMBER" --auto --squash --delete-branch \
               && echo "Auto-merge enabled for #$PR_NUMBER" \
               || echo "::warning::Could not enable auto-merge for #$PR_NUMBER"
             echo "${IFLOW_ID}|${VERSION}|${PR_NUMBER}|${PR_URL}" >> pr-summary.txt
