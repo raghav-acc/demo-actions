@@ -377,3 +377,177 @@ jobs:
             cpilint-*.log
             failure-details.txt
           if-no-files-found: ignore
+# ═══════════════════════════════════════════════════════════════
+  # JOB 5: Auto-PR to develop + dual-approval email + auto-merge
+  # ═══════════════════════════════════════════════════════════════
+  auto-pr-develop:
+    name: Auto-PR to develop
+    needs: [run-cpilint, run-postman]
+    if: needs.run-cpilint.result == 'success' && needs.run-postman.result == 'success'
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Create per-iFlow PRs
+        id: create_prs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          DEVELOP_BRANCH: ${{ env.DEVELOP_BRANCH }}
+          TARGET_BRANCH: ${{ env.TARGET_BRANCH }}
+          DOWNLOAD_DIR: ${{ env.DOWNLOAD_DIR }}   
+        shell: bash
+        run: |
+          set -uo pipefail
+          DEVELOP_BRANCH="${DEVELOP_BRANCH:-develop}"
+          TARGET_BRANCH="${TARGET_BRANCH:-feature}"
+          DOWNLOAD_DIR="${DOWNLOAD_DIR:-btp-iflows}"
+          NEW_ZIPS=$(git diff --name-only --diff-filter=A HEAD^ HEAD -- "$DOWNLOAD_DIR/**/*.zip" 2>/dev/null || true)
+          PASSED_IDS=$(echo "$NEW_ZIPS" | while read -r z; do
+            [ -z "$z" ] && continue
+            IFLOW_ID=$(basename "$(dirname "$(dirname "$z")")")
+            [ -d "$DOWNLOAD_DIR/$IFLOW_ID" ] && echo "$IFLOW_ID"
+          done | sort -u)
+          if [ -z "$PASSED_IDS" ]; then
+            echo "No passed iFlows."
+            echo "prs_created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          : > pr-summary.txt
+          while IFS= read -r IFLOW_ID; do
+            [ -z "$IFLOW_ID" ] && continue
+            echo "Processing PR for: $IFLOW_ID"
+            EXISTING=$(gh pr list \
+              --base "$DEVELOP_BRANCH" \
+              --state open \
+              --label "iflow:$IFLOW_ID" \
+              --json number \
+              --jq '.[0].number // empty')
+            if [ -n "$EXISTING" ]; then
+              echo "SKIP: Open PR #$EXISTING already exists for '$IFLOW_ID'"
+              continue
+            fi
+            VERSION=$(ls -1 "$DOWNLOAD_DIR/$IFLOW_ID" 2>/dev/null | head -1)
+            [ -z "$VERSION" ] && VERSION="unknown"
+            gh label create "iflow:$IFLOW_ID" --color "0366d6" \
+              --description "QA deploy PR for $IFLOW_ID" 2>/dev/null || true
+            TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
+            SAFE_ID=$(echo "$IFLOW_ID" | tr -cd '[:alnum:]_.-')
+            TRIGGER_BRANCH="qa-deploy/${SAFE_ID}-${TIMESTAMP}"
+            git fetch origin "$DEVELOP_BRANCH"
+            git checkout -B "$TRIGGER_BRANCH" "origin/$DEVELOP_BRANCH"
+            git commit --allow-empty -m "QA Deploy Trigger: $IFLOW_ID (gates passed)"
+            git push origin "$TRIGGER_BRANCH"
+            PR_BODY="## QA Deployment Trigger for ${IFLOW_ID}
+            Both quality gates passed (CPILint + Postman). 
+            Requires approval from BOTH Integration and Management teams.
+           - iFlow: ${IFLOW_ID}
+           - Version: ${VERSION}
+           - Source: ${TARGET_BRANCH}
+           - Run: ${RUN_URL}
+            Empty commit only - no files merge to ${DEVELOP_BRANCH}."
+            
+            # Create all labels (idempotent - safe every run)
+            gh label create "auto-generated" --color "ededed" 2>/dev/null || true
+            gh label create "qa-deployment" --color "0e8a16" 2>/dev/null || true
+            gh label create "needs-approval" --color "d93f0b" 2>/dev/null || true
+            gh label create "iflow:$IFLOW_ID" --color "0366d6" 2>/dev/null || true
+            PR_URL=$(gh pr create \
+              --base "$DEVELOP_BRANCH" \
+              --head "$TRIGGER_BRANCH" \
+              --title "[QA Deploy] $IFLOW_ID - needs dual approval" \
+              --body "$PR_BODY" \
+              --label "auto-generated,qa-deployment,needs-approval,iflow:$IFLOW_ID")
+            PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+            echo "PR #$PR_NUMBER created: $PR_URL"
+            # Request reviews from BOTH teams (adjust team slugs to yours)
+            gh pr edit "$PR_NUMBER" \
+              --add-reviewer "${{ github.repository_owner }}/integration-team" \
+              --add-reviewer "${{ github.repository_owner }}/management-team" \
+              2>/dev/null || echo "Note: verify team slugs exist"
+            # Enable auto-merge - waits until BOTH approvals satisfied
+            gh pr merge "$PR_NUMBER" --auto --squash --delete-branch 2>/dev/null \
+              && echo "Auto-merge enabled for #$PR_NUMBER" \
+              || echo "::warning::Could not enable auto-merge for #$PR_NUMBER"
+            echo "${IFLOW_ID}|${VERSION}|${PR_NUMBER}|${PR_URL}" >> pr-summary.txt
+          done <<< "$PASSED_IDS"
+          if [ -s pr-summary.txt ]; then
+            echo "prs_created=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prs_created=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare approval email
+        if: steps.create_prs.outputs.prs_created == 'true'
+        id: email
+        env:
+          DEVELOP_BRANCH: ${{ env.DEVELOP_BRANCH }}
+          TARGET_BRANCH: ${{ env.TARGET_BRANCH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEVELOP_BRANCH="${DEVELOP_BRANCH:-develop}"
+          TARGET_BRANCH="${TARGET_BRANCH:-feature}"
+          ROWS=""
+          COUNT=0
+          while IFS='|' read -r id version prnum prurl; do
+            [ -z "$id" ] && continue
+            COUNT=$((COUNT + 1))
+            ROWS="${ROWS}<tr><td style='padding:10px;border:1px solid #ddd;'>${id}</td><td style='padding:10px;border:1px solid #ddd;'>${version}</td><td style='padding:10px;border:1px solid #ddd;'>#${prnum}</td><td style='padding:10px;border:1px solid #ddd;'><a href='${prurl}' style='background:#28a745ne;border-radius:4px;'>Review &amp; Approve</a></td></tr>"
+          done < pr-summary.txt
+          echo "subject=[Dual Approval Needed] ${COUNT} iFlow(s) ready for QA deployment" >> "$GITHUB_OUTPUT"
+          cat > approval-email.html << HTML_EOF
+          <!DOCTYPE html>
+          <html><head><style>
+            body { font-family: Arial, sans-serif; color: #24292e; max-width: 800px; margin: 0 auto; }
+            .header { background: #0366d6; color: white; padding: 25px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { padding: 25px; border: 1px solid #e1e4e8; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            th { background: #0366d6; color: white; padding: 10px; text-align: left; }
+            .note { background: #fff3cd; border-left: 4px solid #f59e0b; padding: 15px; margin: 15px 0; }
+          </style></head>
+          <body>
+            <div class="header">
+              <h1>Dual Approval Required: QA Deployment</h1>
+              <h2>${COUNT} iFlow(s) passed all quality gates</h2>
+            </div>
+            <div class="content">
+              <p>Dear Integration &amp; Management Teams,</p>
+              <p>The following iFlow(s) passed CPILint and Postman tests. <strong>Both teams must approve</strong> before the PR merges into <strong>${DEVELOP_BRANCH}</strong> and triggers QA deployment.</p>
+              <table>
+                <thead><tr><th>iFlow</th><th>Version</th><th>PR</th><th>Action</th></tr></thead>
+                <tbody>${ROWS}</tbody>
+              </table>
+              <div class="note">
+                <strong>Approval Process:</strong><br>
+                Both the Integration team AND the Management team must approve each PR. Once BOTH approvals are received, the PR auto-merges to <strong>${DEVELOP_BRANCH}</strong> and QA deployment begins automatically.
+              </div>
+              <p style="color:#6a737d;font-size:0.9em;">Click "Review &amp; Approve" above to open the PR and approve. Automated notification from SAP CPI CI/CD.</p>
+            </div>
+          </body></html>
+          HTML_EOF
+          echo "Email prepared for ${COUNT} PR(s)"
+      - name: Send approval email to both teams
+        if: steps.create_prs.outputs.prs_created == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: ${{ steps.email.outputs.subject }}
+          html_body: file://approval-email.html
+          from: SAP CPI CI/CD <${{ secrets.EMAIL_FROM }}>
+          to: ${{ secrets.EMAIL_INTEGRATION_TEAM }}
+          cc: ${{ secrets.EMAIL_MANAGEMENT_TEAM }}          
