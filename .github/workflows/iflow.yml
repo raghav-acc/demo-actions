@@ -539,6 +539,7 @@ jobs:
           </body></html>
           HTML_EOF
           echo "Email prepared for ${COUNT} PR(s)"
+
       - name: Send approval email to both teams
         if: steps.create_prs.outputs.prs_created == 'true'
         uses: dawidd6/action-send-mail@v3
@@ -547,7 +548,11 @@ jobs:
           server_port: ${{ secrets.SMTP_PORT }}
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
+
           subject: ${{ steps.email.outputs.subject }}
           html_body: file://approval-email.html
+
+          from: ${{ secrets.EMAIL_USERNAME }}
           to: ${{ secrets.EMAIL_TO }}
-                 
+          
+                
