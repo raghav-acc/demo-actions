@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<cpilint>
+  <rules>
+
+    <!-- iFlow must have a description -->
+    <iflow-description-required />
+
+    <!-- No cleartext basic authentication -->
+    <cleartext-basic-auth-not-allowed />
+
+    <!-- Endpoints must be encrypted (HTTPS) -->
+    <unencrypted-endpoints-not-allowed />
+
+    <!-- Data store writes must be encrypted -->
+    <unencrypted-data-store-write-not-allowed />
+
+
+  </rules>
+</cpilint>
