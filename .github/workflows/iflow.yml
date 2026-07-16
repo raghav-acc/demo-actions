@@ -474,10 +474,10 @@ jobs:
             PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
             echo "PR #$PR_NUMBER created: $PR_URL"
             # Request reviews from BOTH teams (adjust team slugs to yours)
-            gh pr edit "$PR_NUMBER" \
-              --add-reviewer "${{ github.repository_owner }}/integration-team" \
-              --add-reviewer "${{ github.repository_owner }}/management-team" \
-              2>/dev/null || echo "Note: verify team slugs exist"
+               gh pr edit "$PR_NUMBER" \
+               --add-reviewer "${{ secrets.REVIEWER_1 }}" \
+              --add-reviewer "${{ secrets.REVIEWER_2 }}" \
+               2>/dev/null || echo "::warning::Could not request reviewers"
             # Enable auto-merge - waits until BOTH approvals satisfied
             gh pr merge "$PR_NUMBER" --auto --squash --delete-branch 2>/dev/null \
               && echo "Auto-merge enabled for #$PR_NUMBER" \
