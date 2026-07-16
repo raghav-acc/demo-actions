@@ -544,10 +544,9 @@ jobs:
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
           subject: ${{ steps.email.outputs.subject }}
           html_body: file://approval-email.html
-          from: SAP CPI CI/CD <${{ secrets.EMAIL_FROM }}>
-          to: ${{ secrets.EMAIL_INTEGRATION_TEAM }}
-          cc: ${{ secrets.EMAIL_MANAGEMENT_TEAM }}          
+          to: ${{ secrets.EMAIL_TO }}
+                 
