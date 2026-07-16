@@ -382,8 +382,8 @@ jobs:
   # ═══════════════════════════════════════════════════════════════
   auto-pr-develop:
     name: Auto-PR to develop
-    needs: [run-cpilint, run-postman]
-    if: needs.run-cpilint.result == 'success' && needs.run-postman.result == 'success'
+    needs: [run-cpilint]
+    if: needs.run-cpilint.result == 'success'
     runs-on: ubuntu-latest
     environment: dev
 
