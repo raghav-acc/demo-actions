@@ -718,7 +718,7 @@ jobs:
           subject: ${{ steps.report.outputs.subject }}
           html_body: file://report.html
           from: SAP CPI CI/CD <${{ secrets.EMAIL_USERNAME }}>
-          to: ${{ secrets.EMAIL_TO }}
+          to: ${{ vars.EMAIL_APPROVERS_LIST }}
  # ═══════════════════════════════════════════════════════════════
   # JOB 5: Auto-PR to develop
   # ═══════════════════════════════════════════════════════════════
@@ -928,6 +928,6 @@ jobs:
           subject: ${{ steps.email.outputs.subject }}
           html_body: file://approval-email.html
           from: SAP CPI CI/CD <${{ secrets.EMAIL_USERNAME }}>
-          to: ${{ secrets.EMAIL_TO }}
+          to: ${{ vars.EMAIL_APPROVERS_LIST }}
 
  
