@@ -49,11 +49,11 @@ jobs:
 
         TOKEN=$(curl -s \
         --request POST \
-        "${{ secrets.SAP_BTP_TOKEN_URL }}" \
+        "${{ secrets.CPI_RUNTIME_TOKEN_URL }}" \
         --header "Content-Type: application/x-www-form-urlencoded" \
         --data "grant_type=client_credentials" \
-        --data "client_id=${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}" \
-        --data "client_secret=${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}" \
+        --data "client_id=${{ secrets.CPI_RUNTIME_CLIENT_ID }}" \
+        --data "client_secret=${{ secrets.CPI_RUNTIME_CLIENT_SECRET }}" \
         | jq -r '.access_token')
 
         echo "TOKEN=$TOKEN" >> $GITHUB_ENV
@@ -64,7 +64,7 @@ jobs:
 
         curl \
         --request POST \
-        "${{ secrets.SAP_CPI_API_BASE_URL }}/api/v1/IntegrationDesigntimeArtifacts" \
+        "${{ secrets.CPI_DEV_ENDPOINT }}/api/v1/IntegrationDesigntimeArtifacts" \
         --header "Authorization: Bearer $TOKEN" \
         --form "file=@${IFLOW_NAME}.zip"
 
@@ -74,7 +74,7 @@ jobs:
 
         curl \
         --request POST \
-        "${{ secrets.SAP_CPI_API_BASE_URL }}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${IFLOW_NAME}'&Version='active'" \
+        "${{ secrets.CPI_DEV_ENDPOINT }}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${IFLOW_NAME}'&Version='active'" \
         --header "Authorization: Bearer $TOKEN"
 
     - name: Verify Deployment
@@ -83,5 +83,5 @@ jobs:
 
         curl \
         --request GET \
-        "${{ secrets.SAP_CPI_API_BASE_URL }}/api/v1/IntegrationRuntimeArtifacts('${IFLOW_NAME}')" \
+        "${{ secrets.CPI_DEV_ENDPOINT }}/api/v1/IntegrationRuntimeArtifacts('${IFLOW_NAME}')" \
         --header "Authorization: Bearer $TOKEN"
