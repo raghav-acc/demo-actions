@@ -714,10 +714,10 @@ jobs:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
           username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
           subject: ${{ steps.report.outputs.subject }}
           html_body: file://report.html
-          from: SAP CPI CI/CD <${{ secrets.EMAIL_FROM }}>
+          from: SAP CPI CI/CD <${{ secrets.EMAIL_USERNAME }}>
           to: ${{ vars.EMAIL_DISTRIBUTION_LIST }}
  # ═══════════════════════════════════════════════════════════════
   # JOB 5: Auto-PR to develop
@@ -924,10 +924,10 @@ jobs:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
           username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
           subject: ${{ steps.email.outputs.subject }}
           html_body: file://approval-email.html
-          from: SAP CPI CI/CD <${{ secrets.EMAIL_FROM }}>
-          to: ${{ vars.EMAIL_APPROVERS_LIST }}
+          from: SAP CPI CI/CD <${{ secrets.EMAIL_USERNAME }}>
+          to: ${{ secrets.EMAIL_TO }}
 
  
