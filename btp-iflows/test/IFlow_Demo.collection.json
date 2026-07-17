@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "new-iflow - QA Test Suite",
+    "name": "IFlow_Demo - QA Test Suite",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -13,7 +13,7 @@
   ],
   "item": [
     {
-      "name": "TC01 - POST to new-iflow",
+      "name": "TC01 - POST to IFlow_Demo",
       "event": [
         {
           "listen": "prerequest",
