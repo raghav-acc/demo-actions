@@ -38,7 +38,7 @@
               "    var token = res.json().access_token;",
               "    pm.variables.set('accessToken', token);",
               "    pm.sendRequest({",
-              "      url: pm.variables.get('baseUrl') + '/http/new-iflow',",
+              "      url: pm.variables.get('baseUrl') + '/https/IFlow_Demo',",
               "      method: 'GET',",
               "      header: { 'Authorization': 'Bearer ' + token, 'x-csrf-token': 'fetch' }",
               "    }, function (e, r) {",
@@ -77,9 +77,9 @@
           { "key": "x-csrf-token", "value": "{{csrfToken}}" }
         ],
         "url": {
-          "raw": "{{baseUrl}}/http/new-iflow",
+          "raw": "{{baseUrl}}/https/IFlow_Demo",
           "host": ["{{baseUrl}}"],
-          "path": ["http", "new-iflow"]
+          "path": ["https", "IFlow_Demo"]
         },
         "body": {
           "mode": "raw",
