@@ -56,7 +56,7 @@ jobs:
         --data "client_secret=${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}" \
         | jq -r '.access_token')
 
-        echo "TOKEN=$TOKEN" >> $GITHUB_ENV"
+        echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
     - name: Upload iFlow
 
