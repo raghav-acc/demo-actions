@@ -3,7 +3,7 @@ name: Deploy SAP CPI iFlow
 on:
   push:
     branches:
-      - develop
+      - feature
 
 permissions:
   contents: read
