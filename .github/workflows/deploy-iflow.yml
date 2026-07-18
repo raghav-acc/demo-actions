@@ -5,6 +5,7 @@ on:
     types: [closed]
     branches:
       - develop # Change to 'main' or your targeted environment branch
+  workflow_dispatch:  
 
 permissions:
   contents: read
