@@ -11,7 +11,7 @@ on:
   schedule:
     # Runs twice daily at 09:00 IST and 18:00 IST
     # GitHub cron runs in UTC
-    - cron: "30 3,12 * * *"
+    #- cron: "30 3,12 * * *"
 
 permissions:
   contents: write
