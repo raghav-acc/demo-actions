@@ -20,10 +20,10 @@ env:
 jobs:
   deploy-iflows:
     name: Deploy to SAP BTP QA Environment
-    # Ensure this runs ONLY when a PR is successfully merged, not closed without merging
-    if: github.event.pull_request.merged == true
+    # FIX: Allow the job to run on EITHER a merged PR OR a manual trigger execution
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: qa # Points to your target deployment environment variables
+    environment: dev # Points to your target deployment environment variables
 
     steps:
       - name: Checkout repository
@@ -43,11 +43,21 @@ jobs:
         run: |
           set -uo pipefail
           
-          # Find all ZIP files added or updated in the merge commit
-          CHANGED_ZIPS=$(git diff --name-only --diff-filter=AM HEAD^ HEAD -- "$DOWNLOAD_DIR/**/*.zip" 2>/dev/null || true)
+          # Initialize variables
+          CHANGED_ZIPS=""
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger detected. Scanning the entire '$DOWNLOAD_DIR' directory for all existing iFlows..."
+            # Find all matching .zip files inside the download directory structure
+            CHANGED_ZIPS=$(find "$DOWNLOAD_DIR" -name "*.zip" -type f 2>/dev/null || true)
+          else
+            echo "Pull Request merge detected. Analyzing git diff for changes..."
+            # Find all ZIP files added or updated in the merge commit
+            CHANGED_ZIPS=$(git diff --name-only --diff-filter=AM HEAD^ HEAD -- "$DOWNLOAD_DIR/**/*.zip" 2>/dev/null || true)
+          fi
           
           if [ -z "$CHANGED_ZIPS" ]; then
-            echo "No iFlow ZIP files were added or modified in this merge."
+            echo "No iFlow ZIP files found for deployment."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -141,7 +151,7 @@ jobs:
             else
               echo "Uploading file binary to design time workspace..."
               
-              # Step B: Upload the bundle (requires base64 wrapping inside standard OData payload structural definitions)
+              # Step B: Upload the bundle (requires base64 wrapping inside standard OData payload definitions)
               BASE64_PAYLOAD=$(base64 -w 0 "$zip")
               
               JSON_PAYLOAD=$(jq -n \
