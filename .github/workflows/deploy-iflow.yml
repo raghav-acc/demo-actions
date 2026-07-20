@@ -1,10 +1,10 @@
 name: Deploy Validated iFlows to SAP BTP
 
 on:
-  pull_request:
-    types: [closed]
-    branches:
-      - develop # Change to 'main' or your targeted environment branch
+  #pull_request:
+  #  types: [closed]
+  #  branches:
+  #    - develop # Change to 'main' or your targeted environment branch
   workflow_dispatch:  
 
 permissions:
@@ -21,7 +21,7 @@ jobs:
   deploy-iflows:
     name: Deploy to SAP BTP QA Environment
     # Ensure this runs ONLY when a PR is successfully merged, not closed without merging
-    if: github.event.pull_request.merged == true
+    #if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     environment: qa # Points to your target deployment environment variables
 
