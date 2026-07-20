@@ -132,8 +132,8 @@ jobs:
             [ ! -f "$zip" ] && continue
             
             # Extract names structurally based on folder hierarchy layout: btp-iflows/SAFE_ID/SAFE_VER/file.zip
-            IFLOW_ID=$(basename "$(dirname "$(dirname "$zip")")")
-            VERSION=$(basename "$(dirname "$zip")")
+            IFLOW_ID=$(basename "$zip" .zip)
+            VERSION="active"
             
             echo "════════════════════════════════════════"
             echo "Deploying Artifact: $IFLOW_ID (v$VERSION)"
