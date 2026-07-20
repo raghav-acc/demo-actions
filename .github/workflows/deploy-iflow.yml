@@ -28,6 +28,48 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate configuration and secrets
+        shell: bash
+        env:
+          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
+          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          echo "Configuration"
+          echo "Target branch     : $TARGET_BRANCH"
+          echo "Deployment marker : $DEPLOYMENT_MARKER"
+          echo "Download dir      : $DOWNLOAD_DIR"
+
+          check_secret() {
+            local name="$1" value="$2" prefix="${3:-}"
+            if [ -z "${value:-}" ]; then
+              echo "ERROR: $name is missing or empty."
+              exit 1
+            fi
+            if [ -n "$prefix" ] && [ "${value#$prefix}" = "$value" ]; then
+              echo "ERROR: $name must start with $prefix"
+              exit 1
+            fi
+          }
+
+          check_secret "SAP_BTP_TOKEN_URL" "$SAP_BTP_TOKEN_URL" "https://"
+          check_secret "SAP_BTP_OAUTH_CLIENT_ID" "$SAP_BTP_OAUTH_CLIENT_ID"
+          check_secret "SAP_BTP_OAUTH_CLIENT_SECRET" "$SAP_BTP_OAUTH_CLIENT_SECRET"
+          check_secret "SAP_CPI_API_BASE_URL" "$SAP_CPI_API_BASE_URL" "https://"
+
+          echo "All secrets validated."
+
+      - name: Setup Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "Git configured. On branch: $TARGET_BRANCH"
+
       - name: Get SAP BTP OAuth token
         shell: bash
         env:
@@ -64,6 +106,7 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "SAP_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
           echo "Token obtained."
+
 
       - name: Deploy Changed iFlows
         run: |
