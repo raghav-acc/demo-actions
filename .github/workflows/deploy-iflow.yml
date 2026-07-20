@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: write
+env:
+  TARGET_BRANCH: feature  
 
 jobs:
   deploy:
