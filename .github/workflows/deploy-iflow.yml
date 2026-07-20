@@ -8,10 +8,10 @@ jobs:
     runs-on: windows-latest
 
     env:
-      CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
-      CPI_AUTH_URL: ${{ secrets.CPI_AUTH_URL }}
-      CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
-      CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
+      SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+      SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+      SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+      SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
 
     steps:
       - name: Checkout Repository
@@ -29,13 +29,13 @@ jobs:
 
           $body=@{
             grant_type="client_credentials"
-            client_id=$env:CPI_CLIENT_ID
-            client_secret=$env:CPI_CLIENT_SECRET
+            client_id=$env:SAP_BTP_OAUTH_CLIENT_ID
+            client_secret=$env:SAP_BTP_OAUTH_CLIENT_SECRET
           }
 
           $token=Invoke-RestMethod `
             -Method Post `
-            -Uri $env:CPI_AUTH_URL `
+            -Uri $env:SAP_BTP_TOKEN_URL `
             -ContentType "application/x-www-form-urlencoded" `
             -Body $body
 
@@ -59,7 +59,7 @@ jobs:
           }
 
           $resp=Invoke-WebRequest `
-            -Uri "$env:CPI_BASE_URL/api/v1" `
+            -Uri "$env:SAP_CPI_API_BASE_URL/api/v1" `
             -Method GET `
             -Headers $headers
 
@@ -109,7 +109,7 @@ jobs:
               Write-Host "Uploading..."
 
               $uploadResponse=Invoke-RestMethod `
-                -Uri "$env:CPI_BASE_URL/api/v1/IntegrationDesigntimeArtifacts" `
+                -Uri "$env:SAP_CPI_API_BASE_URL/api/v1/IntegrationDesigntimeArtifacts" `
                 -Method POST `
                 -Headers $uploadHeaders `
                 -Form @{
@@ -134,7 +134,7 @@ jobs:
               # Deploy
               ###################################################
 
-              $deployUrl="$env:CPI_BASE_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id='$([uri]::EscapeDataString($iflowId))'&Version='active'"
+              $deployUrl="$env:SAP_CPI_API_BASE_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id='$([uri]::EscapeDataString($iflowId))'&Version='active'"
 
               Invoke-WebRequest `
                 -Uri $deployUrl `
