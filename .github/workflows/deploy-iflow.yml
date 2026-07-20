@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DOWNLOAD_DIR: btp-iflows
+  DOWNLOAD_DIR: iflow
 
 jobs:
   deploy-iflows:
