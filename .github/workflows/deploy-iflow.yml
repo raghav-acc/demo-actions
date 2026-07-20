@@ -15,22 +15,22 @@ jobs:
       - name: Get OAuth Access Token
         shell: pwsh
         env:
-          CPI_AUTH_URL: ${{ secrets.CPI_AUTH_URL }}
-          CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
-          CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
+          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
           $body = @{
             grant_type    = "client_credentials"
-            client_id     = $env:CPI_CLIENT_ID
-            client_secret = $env:CPI_CLIENT_SECRET
+            client_id     = $env:SAP_BTP_OAUTH_CLIENT_ID
+            client_secret = $env:SAP_BTP_OAUTH_CLIENT_SECRET
           }
 
           try {
               $response = Invoke-RestMethod `
                   -Method POST `
-                  -Uri $env:CPI_AUTH_URL `
+                  -Uri $env:SAP_BTP_TOKEN_URL `
                   -ContentType "application/x-www-form-urlencoded" `
                   -Body $body
 
