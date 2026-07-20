@@ -28,31 +28,42 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get Changed iFlows
-        id: changes
+      - name: Get SAP BTP OAuth token
+        shell: bash
+        env:
+          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
-          FILES=$(git diff --name-only \
-            ${{ github.event.pull_request.base.sha }} \
-            ${{ github.event.pull_request.merge_commit_sha }} \
-            | grep '^iflows/.*\.zip$' || true)
+          set -euo pipefail
 
-          echo "FILES=$FILES" >> $GITHUB_ENV
+          TOKEN_URL="${SAP_BTP_TOKEN_URL%/}"
+          [ "${TOKEN_URL%/oauth/token}" = "$TOKEN_URL" ] && TOKEN_URL="$TOKEN_URL/oauth/token"
 
-      - name: Get OAuth Access Token
-        run: |
-          TOKEN=$(curl -s -X POST "$SAP_BTP_TOKEN_URL" \
+          echo "Requesting SAP OAuth token..."
+
+          RESPONSE=$(curl -sS \
+            -w "\nHTTP_CODE=%{http_code}" \
+            -X POST "$TOKEN_URL" \
+            -u "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            -d "SAP_BTP_OAUTH_CLIENT_ID=$SAP_BTP_OAUTH_CLIENT_ID" \
-            -d "SAP_BTP_OAUTH_CLIENT_SECRET=$SAP_BTP_OAUTH_CLIENT_SECRET" \
-            | jq -r '.access_token')
+            -d "grant_type=client_credentials")
 
-          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-            echo "Failed to obtain access token"
+          HTTP_CODE=$(echo "$RESPONSE" | sed -n 's/^HTTP_CODE=//p')
+          BODY=$(echo "$RESPONSE" | sed '/^HTTP_CODE=/d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Token request failed (HTTP $HTTP_CODE)"
+            echo "$BODY"
             exit 1
           fi
 
-          echo "ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
+          TOKEN=$(echo "$BODY" | jq -r '.access_token // empty')
+          [ -z "$TOKEN" ] && { echo "No access_token in response"; exit 1; }
+
+          echo "::add-mask::$TOKEN"
+          echo "SAP_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "Token obtained."
 
       - name: Deploy Changed iFlows
         run: |
