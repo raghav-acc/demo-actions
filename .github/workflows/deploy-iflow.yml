@@ -1,195 +1,186 @@
-name: Deploy iFlows
+name: Deploy SAP Integration Suite iFlows
 
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
-    name: Deploy All iFlows
     runs-on: windows-latest
-    environment: dev
+
+    env:
+      CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
+      CPI_AUTH_URL: ${{ secrets.CPI_AUTH_URL }}
+      CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
+      CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Get OAuth Access Token
+      ###########################################################
+      # OAuth Token
+      ###########################################################
+
+      - name: Get OAuth Token
         shell: pwsh
-        env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
+
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          $body = @{
-            grant_type    = "client_credentials"
-            client_id     = $env:SAP_BTP_OAUTH_CLIENT_ID
-            client_secret = $env:SAP_BTP_OAUTH_CLIENT_SECRET
+          $body=@{
+            grant_type="client_credentials"
+            client_id=$env:CPI_CLIENT_ID
+            client_secret=$env:CPI_CLIENT_SECRET
           }
 
-          try {
-              $response = Invoke-RestMethod `
-                  -Method POST `
-                  -Uri $env:SAP_BTP_TOKEN_URL `
-                  -ContentType "application/x-www-form-urlencoded" `
-                  -Body $body
+          $token=Invoke-RestMethod `
+            -Method Post `
+            -Uri $env:CPI_AUTH_URL `
+            -ContentType "application/x-www-form-urlencoded" `
+            -Body $body
 
-              if (-not $response.access_token) {
-                  throw "No access token returned."
-              }
-
-              "CPI_DEPLOY_TOKEN=$($response.access_token)" >> $env:GITHUB_ENV
-
-              Write-Host "OAuth token acquired."
+          if(!$token.access_token){
+            throw "Unable to obtain OAuth token."
           }
-          catch {
-              Write-Error $_
-              exit 1
-          }
+
+          "CPI_TOKEN=$($token.access_token)" >> $env:GITHUB_ENV
+
+      ###########################################################
+      # CSRF Token
+      ###########################################################
 
       - name: Get CSRF Token
         shell: pwsh
-        env:
-          CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
         run: |
 
-          $headers = @{
-              Authorization = "Bearer $env:CPI_DEPLOY_TOKEN"
-              Accept = "application/json"
-              "X-CSRF-Token" = "Fetch"
+          $headers=@{
+            Authorization="Bearer $env:CPI_TOKEN"
+            "X-CSRF-Token"="Fetch"
           }
 
-          try {
+          $resp=Invoke-WebRequest `
+            -Uri "$env:CPI_BASE_URL/api/v1" `
+            -Method GET `
+            -Headers $headers
 
-              $response = Invoke-WebRequest `
-                  -Uri "$env:CPI_BASE_URL/api/v1" `
-                  -Method GET `
-                  -Headers $headers
+          "CSRF_TOKEN=$($resp.Headers['X-CSRF-Token'])" >> $env:GITHUB_ENV
 
-              $csrf = $response.Headers["X-CSRF-Token"]
+      ###########################################################
+      # Upload & Deploy
+      ###########################################################
 
-              "CPI_CSRF_TOKEN=$csrf" >> $env:GITHUB_ENV
-
-              Write-Host "CSRF Token fetched."
-
-          }
-          catch {
-
-              Write-Host "No CSRF token returned."
-
-              "CPI_CSRF_TOKEN=" >> $env:GITHUB_ENV
-
-          }
-
-      - name: Deploy All iFlows
+      - name: Upload and Deploy iFlows
         shell: pwsh
-        env:
-          CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
         run: |
 
-          $iflowRoot = "iflow"
+          $folder="iflow"
 
-          if (!(Test-Path $iflowRoot)) {
-              throw "Directory '$iflowRoot' not found."
+          if(!(Test-Path $folder)){
+            throw "iflow folder not found."
           }
 
-          $resultsDir = "deployment-results"
-          New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
+          $zipFiles=Get-ChildItem $folder -Filter *.zip
 
-          $deploymentResults = @()
-
-          # Find all iFlow folders
-          $iflows = Get-ChildItem $iflowRoot -Directory
-
-          if ($iflows.Count -eq 0) {
-              Write-Host "No iFlows found."
-              exit 0
+          if($zipFiles.Count -eq 0){
+            throw "No ZIP files found."
           }
 
-          foreach ($iflow in $iflows) {
+          $results=@()
 
-              $iflowId = $iflow.Name
+          foreach($zip in $zipFiles){
 
-              Write-Host ""
-              Write-Host "Deploying iFlow: $iflowId"
+            Write-Host ""
+            Write-Host "====================================="
+            Write-Host "Processing $($zip.Name)"
+            Write-Host "====================================="
 
-              $deployUrl = "$env:CPI_BASE_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id='$([uri]::EscapeDataString($iflowId))'&Version='active'"
+            try{
 
-              $headers = @{
-                  Authorization = "Bearer $env:CPI_DEPLOY_TOKEN"
-                  Accept = "application/json"
+              ###################################################
+              # Upload
+              ###################################################
+
+              $uploadHeaders=@{
+                Authorization="Bearer $env:CPI_TOKEN"
+                "X-CSRF-Token"=$env:CSRF_TOKEN
+                Accept="application/json"
               }
 
-              if ($env:CPI_CSRF_TOKEN) {
-                  $headers["X-CSRF-Token"] = $env:CPI_CSRF_TOKEN
+              Write-Host "Uploading..."
+
+              $uploadResponse=Invoke-RestMethod `
+                -Uri "$env:CPI_BASE_URL/api/v1/IntegrationDesigntimeArtifacts" `
+                -Method POST `
+                -Headers $uploadHeaders `
+                -Form @{
+                    file=Get-Item $zip.FullName
+                }
+
+              Write-Host "Upload successful."
+
+              ###################################################
+              # Determine iFlow ID
+              ###################################################
+
+              $iflowId=$uploadResponse.Id
+
+              if([string]::IsNullOrWhiteSpace($iflowId)){
+                  $iflowId=$zip.BaseName.Split("_")[0]
               }
 
-              try {
+              Write-Host "iFlow ID = $iflowId"
 
-                  $response = Invoke-WebRequest `
-                      -Uri $deployUrl `
-                      -Method POST `
-                      -Headers $headers
+              ###################################################
+              # Deploy
+              ###################################################
 
-                  Write-Host "Deployment Successful."
+              $deployUrl="$env:CPI_BASE_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id='$([uri]::EscapeDataString($iflowId))'&Version='active'"
 
-                  $deploymentResults += [PSCustomObject]@{
-                      iFlowName = $iflowId
-                      Status = "Success"
-                      StatusCode = $response.StatusCode
-                      Response = $response.Content
-                  }
+              Invoke-WebRequest `
+                -Uri $deployUrl `
+                -Method POST `
+                -Headers $uploadHeaders
 
-              }
-              catch {
+              Write-Host "Deployment successful."
 
-                  $status = ""
-                  $msg = $_.Exception.Message
-
-                  if ($_.Exception.Response) {
-
-                      $status = $_.Exception.Response.StatusCode.value__
-
-                      try {
-                          $reader = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
-                          $msg = $reader.ReadToEnd()
-                      }
-                      catch {}
-
-                  }
-
-                  Write-Host "Deployment Failed."
-
-                  $deploymentResults += [PSCustomObject]@{
-                      iFlowName = $iflowId
-                      Status = "Failed"
-                      StatusCode = $status
-                      Response = $msg
-                  }
-
+              $results += [PSCustomObject]@{
+                File=$zip.Name
+                IFlow=$iflowId
+                Status="Success"
               }
 
-              Start-Sleep -Seconds 2
+            }
+            catch{
+
+              Write-Host $_
+
+              $results += [PSCustomObject]@{
+                File=$zip.Name
+                IFlow=""
+                Status="Failed"
+              }
+
+            }
 
           }
 
-          $deploymentResults |
-              ConvertTo-Json -Depth 10 |
-              Out-File "$resultsDir/deployment-summary.json"
+          New-Item deployment-results -ItemType Directory -Force | Out-Null
 
-          Write-Host ""
-          Write-Host "Deployment Summary"
+          $results |
+            ConvertTo-Json -Depth 5 |
+            Set-Content deployment-results/deployment-summary.json
 
-          $deploymentResults | Format-Table
+          $results | Format-Table
 
-          $failed = $deploymentResults | Where-Object Status -eq "Failed"
-
-          if ($failed.Count -gt 0) {
-              throw "$($failed.Count) deployment(s) failed."
+          if(($results | Where Status -eq "Failed").Count -gt 0){
+            throw "One or more deployments failed."
           }
 
-      - name: Upload Deployment Results
+      ###########################################################
+      # Upload Summary
+      ###########################################################
+
+      - name: Upload Deployment Summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
