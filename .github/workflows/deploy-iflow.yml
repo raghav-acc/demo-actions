@@ -152,13 +152,14 @@ jobs:
               echo "Uploading file binary to design time workspace..."
               
               # Step B: Upload the bundle (requires base64 wrapping inside standard OData payload definitions)
-              BASE64_PAYLOAD=$(base64 -w 0 "$zip")
-              
-              JSON_PAYLOAD=$(jq -n \
-                --arg id "$IFLOW_ID" \
-                --arg ver "$VERSION" \
-                --arg bytes "$BASE64_PAYLOAD" \
-                '{Id: $id, Version: $ver, FileBytes: $bytes}')
+              UPLOAD_URL="$API_BASE/api/v1/IntegrationDesigntimeArtifacts"
+
+              UPLOAD_CODE=$(curl -sS \
+                -o upload_response.json \
+                -w "%{http_code}" \
+                -X POST "$UPLOAD_URL" \
+                -H "Authorization: Bearer $SAP_ACCESS_TOKEN" \
+                -F "file=@${zip}")
                 
               UPLOAD_URL="$API_BASE/api/v1/IntegrationDesigntimeArtifacts"
               
