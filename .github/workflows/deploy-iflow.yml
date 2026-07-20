@@ -163,12 +163,7 @@ jobs:
                 
               UPLOAD_URL="$API_BASE/api/v1/IntegrationDesigntimeArtifacts"
               
-              UPLOAD_CODE=$(curl -sS -o upload_response.json -w "%{http_code}" \
-                -X POST "$UPLOAD_URL" \
-                -H "Authorization: Bearer $SAP_ACCESS_TOKEN" \
-                -H "Content-Type: application/json" \
-                -H "Accept: application/json" \
-                -d "$JSON_PAYLOAD")
+
                 
               if [ "$UPLOAD_CODE" != "201" ] && [ "$UPLOAD_CODE" != "200" ]; then
                 echo "::error::Failed uploading structural component $IFLOW_ID (HTTP $UPLOAD_CODE)"
