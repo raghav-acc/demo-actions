@@ -1,192 +1,196 @@
-name: Deploy Validated iFlows to SAP BTP
+name: Deploy iFlows
 
 on:
-  pull_request:
-    types: [closed]
-    branches:
-      - develop # Change to 'main' or your targeted environment branch
-  workflow_dispatch:  
-
-permissions:
-  contents: read
-
-concurrency:
-  group: deploy-iflows-${{ github.ref }}
-  cancel-in-progress: false
-
-env:
-  DOWNLOAD_DIR: iflow
+  workflow_dispatch:
 
 jobs:
-  deploy-iflows:
-    name: Deploy to SAP BTP QA Environment
-    # FIX: Allow the job to run on EITHER a merged PR OR a manual trigger execution
-    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: dev # Points to your target deployment environment variables
+  deploy:
+    name: Deploy All iFlows
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2 # Fetch the merge commit and its immediate parent to detect changes
 
-      - name: Setup Git & Tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "::notice::Checking for modified iFlow binaries..."
-
-      - name: Detect merged iFlows
-        id: detect_changes
-        shell: bash
-        run: |
-          set -uo pipefail
-          
-          # Initialize variables
-          CHANGED_ZIPS=""
-          
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual trigger detected. Scanning the entire '$DOWNLOAD_DIR' directory for all existing iFlows..."
-            # Find all matching .zip files inside the download directory structure
-            CHANGED_ZIPS=$(find "$DOWNLOAD_DIR" -name "*.zip" -type f 2>/dev/null || true)
-          else
-            echo "Pull Request merge detected. Analyzing git diff for changes..."
-            # Find all ZIP files added or updated in the merge commit
-            CHANGED_ZIPS=$(git diff --name-only --diff-filter=AM HEAD^ HEAD -- "$DOWNLOAD_DIR/**/*.zip" 2>/dev/null || true)
-          fi
-          
-          if [ -z "$CHANGED_ZIPS" ]; then
-            echo "No iFlow ZIP files found for deployment."
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          
-          echo "Found matching iFlow binaries for deployment:"
-          echo "$CHANGED_ZIPS"
-          
-          # Save the list to a temporary file for processing
-          echo "$CHANGED_ZIPS" > merged-zips.txt
-          echo "has_changes=true" >> "$GITHUB_OUTPUT"
-
-      - name: Validate secrets
-        if: steps.detect_changes.outputs.has_changes == 'true'
-        shell: bash
+      - name: Get OAuth Access Token
+        shell: pwsh
         env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+          CPI_AUTH_URL: ${{ secrets.CPI_AUTH_URL }}
+          CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
+          CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
         run: |
-          set -euo pipefail
-          check_secret() {
-            if [ -z "$2" ]; then echo "ERROR: $1 is missing."; exit 1; fi
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $body = @{
+            grant_type    = "client_credentials"
+            client_id     = $env:CPI_CLIENT_ID
+            client_secret = $env:CPI_CLIENT_SECRET
           }
-          check_secret "SAP_BTP_TOKEN_URL" "$SAP_BTP_TOKEN_URL"
-          check_secret "SAP_BTP_OAUTH_CLIENT_ID" "$SAP_BTP_OAUTH_CLIENT_ID"
-          check_secret "SAP_BTP_OAUTH_CLIENT_SECRET" "$SAP_BTP_OAUTH_CLIENT_SECRET"
-          check_secret "SAP_CPI_API_BASE_URL" "$SAP_CPI_API_BASE_URL"
 
-      - name: Get SAP BTP OAuth token
-        if: steps.detect_changes.outputs.has_changes == 'true'
-        shell: bash
-        env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-          TOKEN_URL="${SAP_BTP_TOKEN_URL%/}"
-          [ "${TOKEN_URL%/oauth/token}" = "$TOKEN_URL" ] && TOKEN_URL="$TOKEN_URL/oauth/token"
+          try {
+              $response = Invoke-RestMethod `
+                  -Method POST `
+                  -Uri $env:CPI_AUTH_URL `
+                  -ContentType "application/x-www-form-urlencoded" `
+                  -Body $body
 
-          RESPONSE=$(curl -sS \
-            -w "\nHTTP_CODE=%{http_code}" \
-            -X POST "$TOKEN_URL" \
-            -u "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials")
+              if (-not $response.access_token) {
+                  throw "No access token returned."
+              }
 
-          HTTP_CODE=$(echo "$RESPONSE" | sed -n 's/^HTTP_CODE=//p')
-          BODY=$(echo "$RESPONSE" | sed '/^HTTP_CODE=/d')
+              "CPI_DEPLOY_TOKEN=$($response.access_token)" >> $env:GITHUB_ENV
 
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Auth failed (HTTP $HTTP_CODE)"
-            exit 1
-          fi
-
-          TOKEN=$(echo "$BODY" | jq -r '.access_token // empty')
-          echo "::add-mask::$TOKEN"
-          echo "SAP_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-
-      - name: Upload and Deploy iFlows to SAP BTP Runtime
-        if: steps.detect_changes.outputs.has_changes == 'true'
-        shell: bash
-        env:
-          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-        run: |
-          set -uo pipefail
-          API_BASE="${SAP_CPI_API_BASE_URL%/}"
-          
-          while IFS= read -r zip; do
-            [ -z "$zip" ] && continue
-            [ ! -f "$zip" ] && continue
-            
-            # Extract names structurally based on folder hierarchy layout: btp-iflows/SAFE_ID/SAFE_VER/file.zip
-            IFLOW_ID=$(basename "$zip" .zip)
-            VERSION="active"
-            
-            echo "════════════════════════════════════════"
-            echo "Deploying Artifact: $IFLOW_ID (v$VERSION)"
-            
-            # Step A: Check if the artifact already exists in the target environment
-            ODATA_ID=$(printf "%s" "$IFLOW_ID" | sed "s/'/''/g")
-            CHECK_URL="$API_BASE/api/v1/IntegrationDesigntimeArtifacts(Id='$ODATA_ID',Version='$VERSION')?\$format=json"
-            
-            CHECK_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
-              -X GET "$CHECK_URL" \
-              -H "Authorization: Bearer $SAP_ACCESS_TOKEN")
-              
-            if [ "$CHECK_CODE" = "200" ]; then
-              echo "Info: v$VERSION already uploaded to design time. Proceeding directly to deployment phase..."
-            else
-              echo "Uploading file binary to design time workspace..."
-              
-              # Step B: Upload the bundle (requires base64 wrapping inside standard OData payload definitions)
-              UPLOAD_URL="$API_BASE/api/v1/IntegrationDesigntimeArtifacts"
-
-              UPLOAD_CODE=$(curl -sS \
-                -o upload_response.json \
-                -w "%{http_code}" \
-                -X POST "$UPLOAD_URL" \
-                -H "Authorization: Bearer $SAP_ACCESS_TOKEN" \
-                -F "file=@${zip}")
-                
-              UPLOAD_URL="$API_BASE/api/v1/IntegrationDesigntimeArtifacts"
-              
-
-                
-              if [ "$UPLOAD_CODE" != "201" ] && [ "$UPLOAD_CODE" != "200" ]; then
-                echo "::error::Failed uploading structural component $IFLOW_ID (HTTP $UPLOAD_CODE)"
-                cat upload_response.json
-                exit 1
-              fi
-              echo "Upload successful."
-            fi
-            
-            # Step C: Trigger Actual Cloud Integration Deployment Action 
-            DEPLOY_URL="$API_BASE/api/v1/DeployIntegrationDesigntimeArtifact?Id='$ODATA_ID'&Version='$VERSION'"
-            
-            DEPLOY_CODE=$(curl -sS -o deploy_response.json -w "%{http_code}" \
-              -X POST "$DEPLOY_URL" \
-              -H "Authorization: Bearer $SAP_ACCESS_TOKEN" \
-              -H "Accept: application/json")
-              
-            if [ "$DEPLOY_CODE" = "202" ] || [ "$DEPLOY_CODE" = "200" ]; then
-              echo "Successfully triggered deployment sequence for $IFLOW_ID."
-            else
-              echo "::error::Deployment activation sequence failed for $IFLOW_ID (HTTP $DEPLOY_CODE)"
-              cat deploy_response.json
+              Write-Host "OAuth token acquired."
+          }
+          catch {
+              Write-Error $_
               exit 1
-            fi
-            
-          done < merged-zips.txt
+          }
+
+      - name: Get CSRF Token
+        shell: pwsh
+        env:
+          CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
+        run: |
+
+          $headers = @{
+              Authorization = "Bearer $env:CPI_DEPLOY_TOKEN"
+              Accept = "application/json"
+              "X-CSRF-Token" = "Fetch"
+          }
+
+          try {
+
+              $response = Invoke-WebRequest `
+                  -Uri "$env:CPI_BASE_URL/api/v1" `
+                  -Method GET `
+                  -Headers $headers
+
+              $csrf = $response.Headers["X-CSRF-Token"]
+
+              "CPI_CSRF_TOKEN=$csrf" >> $env:GITHUB_ENV
+
+              Write-Host "CSRF Token fetched."
+
+          }
+          catch {
+
+              Write-Host "No CSRF token returned."
+
+              "CPI_CSRF_TOKEN=" >> $env:GITHUB_ENV
+
+          }
+
+      - name: Deploy All iFlows
+        shell: pwsh
+        env:
+          CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
+        run: |
+
+          $iflowRoot = "btp-iflows"
+
+          if (!(Test-Path $iflowRoot)) {
+              throw "Directory '$iflowRoot' not found."
+          }
+
+          $resultsDir = "deployment-results"
+          New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
+
+          $deploymentResults = @()
+
+          # Find all iFlow folders
+          $iflows = Get-ChildItem $iflowRoot -Directory
+
+          if ($iflows.Count -eq 0) {
+              Write-Host "No iFlows found."
+              exit 0
+          }
+
+          foreach ($iflow in $iflows) {
+
+              $iflowId = $iflow.Name
+
+              Write-Host ""
+              Write-Host "Deploying iFlow: $iflowId"
+
+              $deployUrl = "$env:CPI_BASE_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id='$([uri]::EscapeDataString($iflowId))'&Version='active'"
+
+              $headers = @{
+                  Authorization = "Bearer $env:CPI_DEPLOY_TOKEN"
+                  Accept = "application/json"
+              }
+
+              if ($env:CPI_CSRF_TOKEN) {
+                  $headers["X-CSRF-Token"] = $env:CPI_CSRF_TOKEN
+              }
+
+              try {
+
+                  $response = Invoke-WebRequest `
+                      -Uri $deployUrl `
+                      -Method POST `
+                      -Headers $headers
+
+                  Write-Host "Deployment Successful."
+
+                  $deploymentResults += [PSCustomObject]@{
+                      iFlowName = $iflowId
+                      Status = "Success"
+                      StatusCode = $response.StatusCode
+                      Response = $response.Content
+                  }
+
+              }
+              catch {
+
+                  $status = ""
+                  $msg = $_.Exception.Message
+
+                  if ($_.Exception.Response) {
+
+                      $status = $_.Exception.Response.StatusCode.value__
+
+                      try {
+                          $reader = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
+                          $msg = $reader.ReadToEnd()
+                      }
+                      catch {}
+
+                  }
+
+                  Write-Host "Deployment Failed."
+
+                  $deploymentResults += [PSCustomObject]@{
+                      iFlowName = $iflowId
+                      Status = "Failed"
+                      StatusCode = $status
+                      Response = $msg
+                  }
+
+              }
+
+              Start-Sleep -Seconds 2
+
+          }
+
+          $deploymentResults |
+              ConvertTo-Json -Depth 10 |
+              Out-File "$resultsDir/deployment-summary.json"
+
+          Write-Host ""
+          Write-Host "Deployment Summary"
+
+          $deploymentResults | Format-Table
+
+          $failed = $deploymentResults | Where-Object Status -eq "Failed"
+
+          if ($failed.Count -gt 0) {
+              throw "$($failed.Count) deployment(s) failed."
+          }
+
+      - name: Upload Deployment Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-results
+          path: deployment-results
