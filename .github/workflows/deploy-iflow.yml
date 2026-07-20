@@ -10,12 +10,10 @@ on:
 
 permissions:
   contents: write
-env:
-  TARGET_BRANCH: feature  
 
 jobs:
   deploy:
-  #  if: github.event.pull_request.merged == true
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     env:
@@ -30,85 +28,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate configuration and secrets
-        shell: bash
-        env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+      - name: Get Changed iFlows
+        id: changes
         run: |
-          set -euo pipefail
+          FILES=$(git diff --name-only \
+            ${{ github.event.pull_request.base.sha }} \
+            ${{ github.event.pull_request.merge_commit_sha }} \
+            | grep '^iflows/.*\.zip$' || true)
 
-          echo "Configuration"
-          echo "Target branch     : $TARGET_BRANCH"
-          echo "Deployment marker : $DEPLOYMENT_MARKER"
-          echo "Download dir      : $DOWNLOAD_DIR"
+          echo "FILES=$FILES" >> $GITHUB_ENV
 
-          check_secret() {
-            local name="$1" value="$2" prefix="${3:-}"
-            if [ -z "${value:-}" ]; then
-              echo "ERROR: $name is missing or empty."
-              exit 1
-            fi
-            if [ -n "$prefix" ] && [ "${value#$prefix}" = "$value" ]; then
-              echo "ERROR: $name must start with $prefix"
-              exit 1
-            fi
-          }
-
-          check_secret "SAP_BTP_TOKEN_URL" "$SAP_BTP_TOKEN_URL" "https://"
-          check_secret "SAP_BTP_OAUTH_CLIENT_ID" "$SAP_BTP_OAUTH_CLIENT_ID"
-          check_secret "SAP_BTP_OAUTH_CLIENT_SECRET" "$SAP_BTP_OAUTH_CLIENT_SECRET"
-          check_secret "SAP_CPI_API_BASE_URL" "$SAP_CPI_API_BASE_URL" "https://"
-
-          echo "All secrets validated."
-
-      - name: Setup Git
-        shell: bash
+      - name: Get OAuth Access Token
         run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          echo "Git configured. On branch: $TARGET_BRANCH"
-
-      - name: Get SAP BTP OAuth token
-        shell: bash
-        env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-
-          TOKEN_URL="${SAP_BTP_TOKEN_URL%/}"
-          [ "${TOKEN_URL%/oauth/token}" = "$TOKEN_URL" ] && TOKEN_URL="$TOKEN_URL/oauth/token"
-
-          echo "Requesting SAP OAuth token..."
-
-          RESPONSE=$(curl -sS \
-            -w "\nHTTP_CODE=%{http_code}" \
-            -X POST "$TOKEN_URL" \
-            -u "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
+          TOKEN=$(curl -s -X POST "$SAP_BTP_TOKEN_URL" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials")
+            -d "grant_type=client_credentials" \
+            -d "SAP_BTP_OAUTH_CLIENT_ID=$SAP_BTP_OAUTH_CLIENT_ID" \
+            -d "SAP_BTP_OAUTH_CLIENT_SECRET=$SAP_BTP_OAUTH_CLIENT_SECRET" \
+            | jq -r '.access_token')
 
-          HTTP_CODE=$(echo "$RESPONSE" | sed -n 's/^HTTP_CODE=//p')
-          BODY=$(echo "$RESPONSE" | sed '/^HTTP_CODE=/d')
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Token request failed (HTTP $HTTP_CODE)"
-            echo "$BODY"
+          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+            echo "Failed to obtain access token"
             exit 1
           fi
 
-          TOKEN=$(echo "$BODY" | jq -r '.access_token // empty')
-          [ -z "$TOKEN" ] && { echo "No access_token in response"; exit 1; }
-
-          echo "::add-mask::$TOKEN"
-          echo "SAP_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-          echo "Token obtained."
-
+          echo "ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Deploy Changed iFlows
         run: |
