@@ -15,7 +15,7 @@ jobs:
       - name: Get OAuth Access Token
         shell: pwsh
         env:
-          SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
           SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
           SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
@@ -30,7 +30,7 @@ jobs:
           try {
               $response = Invoke-RestMethod `
                   -Method POST `
-                  -Uri $env:SAP_CPI_API_BASE_URL `
+                  -Uri $env:SAP_BTP_TOKEN_URL `
                   -ContentType "application/x-www-form-urlencoded" `
                   -Body $body
 
