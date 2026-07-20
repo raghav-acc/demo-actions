@@ -39,20 +39,29 @@ jobs:
           echo "FILES=$FILES" >> $GITHUB_ENV
 
       - name: Get OAuth Access Token
-        run: |
-          TOKEN=$(curl -s -X POST "$SAP_BTP_TOKEN_URL" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            -d "SAP_BTP_OAUTH_CLIENT_ID=$SAP_BTP_OAUTH_CLIENT_ID" \
-            -d "SAP_BTP_OAUTH_CLIENT_SECRET=$SAP_BTP_OAUTH_CLIENT_SECRET" \
-            | jq -r '.access_token')
+           env:
+              SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+              SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+              SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
 
-          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+          run: |
+            set -euo pipefail
+            echo "Requesting SAP OAuth token..."
+            RESPONSE=$(curl -s -X POST "$SAP_BTP_TOKEN_URL" \
+            -u "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials")
+            echo "OAuth Response:"
+            echo "$RESPONSE"
+
+            TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+
+            if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
             echo "Failed to obtain access token"
             exit 1
-          fi
+            fi
 
-          echo "ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
+            echo "ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Deploy Changed iFlows
         run: |
