@@ -88,7 +88,7 @@ jobs:
           CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
         run: |
 
-          $iflowRoot = "btp-iflows"
+          $iflowRoot = "iflow"
 
           if (!(Test-Path $iflowRoot)) {
               throw "Directory '$iflowRoot' not found."
