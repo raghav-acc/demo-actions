@@ -390,67 +390,67 @@ jobs:
 
             # Write metadata file with TR info
             cat > "$TARGET_DIR/deployment-info.json" <<EOF
-{
-  "iflowId": "$IFLOW_ID",
-  "version": "$VERSION",
-  "transportRequestId": "$TR_ID",
-  "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "deployedBy": "github-actions[bot]",
-  "status": "$ARCHIVE_STATUS_TAG",
-  "commitSha": "$GITHUB_SHA",
-  "workflowRun": "$GITHUB_RUN_ID"
-}
-EOF
-
-            # Clean up empty parent
-            PARENT_DIR="$DOWNLOAD_DIR/$SAFE_ID"
-            if [ -d "$PARENT_DIR" ] && [ -z "$(ls -A "$PARENT_DIR" 2>/dev/null)" ]; then
-              rmdir "$PARENT_DIR"
-              echo "  🧹 Cleaned empty: $PARENT_DIR"
-            fi
-          done
-
-          echo "✅ Archive move complete."
-
-      - name: Commit and push archive changes
-        if: env.SKIP_DEPLOY != 'true' && steps.deploy.outputs.success_count != '0'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git add "$DOWNLOAD_DIR" "$ARCHIVE_DIR" 2>/dev/null || true
-
-          if git diff --staged --quiet; then
-            echo "::notice::Nothing to commit for archive."
-            exit 0
-          fi
-
-          TR_NUMBERS="${{ steps.deploy.outputs.tr_numbers }}"
-          git commit -m "Deploy to QA: TR=${TR_NUMBERS} | ${{ steps.deploy.outputs.success_count }} iFlows"
-
-          git fetch origin "$SOURCE_BRANCH"
-          if ! git pull --rebase origin "$SOURCE_BRANCH"; then
-            git rebase --abort || true
-            echo "❌ Rebase conflict on push."
-            exit 1
-          fi
-
-          git push origin "$SOURCE_BRANCH"
-          echo "🚀 Archive changes pushed to $SOURCE_BRANCH"
-
-      - name: Create Git tag with TR number
-        if: env.SKIP_DEPLOY != 'true' && steps.deploy.outputs.success_count != '0'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG_NAME="qa-deploy-$(date -u +"%Y%m%d-%H%M%S")-run${GITHUB_RUN_ID}"
-          TR_NUMBERS="${{ steps.deploy.outputs.tr_numbers }}"
-
-          git tag -a "$TAG_NAME" -m "QA Deployment - TR: $TR_NUMBERS - Success: ${{ steps.deploy.outputs.success_count }} - Failed: ${{ steps.deploy.outputs.failed_count }}"
-          git push origin "$TAG_NAME"
-
-          echo "🏷️  Tag created: $TAG_NAME"
+          {
+            "iflowId": "$IFLOW_ID",
+            "version": "$VERSION",
+            "transportRequestId": "$TR_ID",
+            "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "deployedBy": "github-actions[bot]",
+            "status": "$ARCHIVE_STATUS_TAG",
+            "commitSha": "$GITHUB_SHA",
+            "workflowRun": "$GITHUB_RUN_ID"
+          }
+          EOF
+          
+                      # Clean up empty parent
+                      PARENT_DIR="$DOWNLOAD_DIR/$SAFE_ID"
+                      if [ -d "$PARENT_DIR" ] && [ -z "$(ls -A "$PARENT_DIR" 2>/dev/null)" ]; then
+                        rmdir "$PARENT_DIR"
+                        echo "  🧹 Cleaned empty: $PARENT_DIR"
+                      fi
+                    done
+          
+                    echo "✅ Archive move complete."
+          
+                - name: Commit and push archive changes
+                  if: env.SKIP_DEPLOY != 'true' && steps.deploy.outputs.success_count != '0'
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+          
+                    git add "$DOWNLOAD_DIR" "$ARCHIVE_DIR" 2>/dev/null || true
+          
+                    if git diff --staged --quiet; then
+                      echo "::notice::Nothing to commit for archive."
+                      exit 0
+                    fi
+          
+                    TR_NUMBERS="${{ steps.deploy.outputs.tr_numbers }}"
+                    git commit -m "Deploy to QA: TR=${TR_NUMBERS} | ${{ steps.deploy.outputs.success_count }} iFlows"
+          
+                    git fetch origin "$SOURCE_BRANCH"
+                    if ! git pull --rebase origin "$SOURCE_BRANCH"; then
+                      git rebase --abort || true
+                      echo "❌ Rebase conflict on push."
+                      exit 1
+                    fi
+          
+                    git push origin "$SOURCE_BRANCH"
+                    echo "🚀 Archive changes pushed to $SOURCE_BRANCH"
+          
+                - name: Create Git tag with TR number
+                  if: env.SKIP_DEPLOY != 'true' && steps.deploy.outputs.success_count != '0'
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+          
+                    TAG_NAME="qa-deploy-$(date -u +"%Y%m%d-%H%M%S")-run${GITHUB_RUN_ID}"
+                    TR_NUMBERS="${{ steps.deploy.outputs.tr_numbers }}"
+          
+                    git tag -a "$TAG_NAME" -m "QA Deployment - TR: $TR_NUMBERS - Success: ${{ steps.deploy.outputs.success_count }} - Failed: ${{ steps.deploy.outputs.failed_count }}"
+                    git push origin "$TAG_NAME"
+          
+                    echo "🏷️  Tag created: $TAG_NAME"
 
       - name: Prepare email content
         if: always() && env.SKIP_DEPLOY != 'true'
