@@ -1,147 +1,202 @@
-name: Deploy iFlows
+name: Deploy iFlows to QA
 
 on:
-  workflow_dispatch:
+  #pull_request:
+  #  branches:
+  #    - develop
+  #  types:
+  #    - closed
+  workflow_dispatch:    
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-qa
+  cancel-in-progress: false
+
+env:
+  SOURCE_BRANCH: develop
+  IFLOW_DIR: btp-iflows
+  ARCHIVE_DIR: archive
+  ARCHIVE_TAG: ReadyForProd
 
 jobs:
-  deploy:
-    name: Deploy All iFlows
-    runs-on: windows-latest
+
+  deploy-qa:
+    #if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
     environment: dev
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Get OAuth Access Token
-        shell: pwsh
-        env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-        run: |
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $body = @{
-            grant_type    = "client_credentials"
-            client_id     = $env:SAP_BTP_OAUTH_CLIENT_ID
-            client_secret = $env:SAP_BTP_OAUTH_CLIENT_SECRET
-          }
-          try {
-              $response = Invoke-RestMethod `
-                  -Method POST `
-                  -Uri $env:SAP_BTP_TOKEN_URL `
-                  -ContentType "application/x-www-form-urlencoded" `
-                  -Body $body
-              if (-not $response.access_token) {
-                  throw "No access token returned."
-              }
-              "CPI_DEPLOY_TOKEN=$($response.access_token)" >> $env:GITHUB_ENV
-              Write-Host "OAuth token acquired."
-          }
-          catch {
-              Write-Error $_
-              exit 1
-          }
-      - name: Get CSRF Token
-        shell: pwsh
-        env:
-          CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
-        run: |
-          $headers = @{
-              Authorization = "Bearer $env:CPI_DEPLOY_TOKEN"
-              Accept = "application/json"
-              "X-CSRF-Token" = "Fetch"
-          }
-          try {
-              $response = Invoke-WebRequest `
-                  -Uri "$env:CPI_BASE_URL/api/v1" `
-                  -Method GET `
-                  -Headers $headers
-              $csrf = $response.Headers["X-CSRF-Token"]
-              "CPI_CSRF_TOKEN=$csrf" >> $env:GITHUB_ENV
-              Write-Host "CSRF Token fetched."
-          }
-          catch {
-              Write-Host "No CSRF token returned."
-              "CPI_CSRF_TOKEN=" >> $env:GITHUB_ENV
-          }
-      - name: Deploy All iFlows
-        shell: pwsh
-        env:
-          CPI_BASE_URL: ${{ secrets.CPI_BASE_URL }}
-        run: |
-          $iflowRoot = "iflow"
-          if (!(Test-Path $iflowRoot)) {
-              throw "Directory '$iflowRoot' not found."
-          }
-          $resultsDir = "deployment-results"
-          New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
-          $deploymentResults = @()
-          # Find all iFlow folders
-          $iflows = Get-ChildItem $iflowRoot -Directory
-          if ($iflows.Count -eq 0) {
-              Write-Host "No iFlows found."
-              exit 0
-          }
-          foreach ($iflow in $iflows) {
-              $iflowId = $iflow.Name
-              Write-Host ""
-              Write-Host "Deploying iFlow: $iflowId"
-              $deployUrl = "$env:CPI_BASE_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id='$([uri]::EscapeDataString($iflowId))'&Version='active'"
-              $headers = @{
-                  Authorization = "Bearer $env:CPI_DEPLOY_TOKEN"
-                  Accept = "application/json"
-              }
-              if ($env:CPI_CSRF_TOKEN) {
-                  $headers["X-CSRF-Token"] = $env:CPI_CSRF_TOKEN
-              }
-              try {
-                  $response = Invoke-WebRequest `
-                      -Uri $deployUrl `
-                      -Method POST `
-                      -Headers $headers
-                  Write-Host "Deployment Successful."
-                  $deploymentResults += [PSCustomObject]@{
-                      iFlowName = $iflowId
-                      Status = "Success"
-                      StatusCode = $response.StatusCode
-                      Response = $response.Content
-                  }
-              }
-              catch {
-                  $status = ""
-                  $msg = $_.Exception.Message
-                  if ($_.Exception.Response) {
-                      $status = $_.Exception.Response.StatusCode.value__
-                      try {
-                          $reader = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
-                          $msg = $reader.ReadToEnd()
-                      }
-                      catch {}
-                  }
-                  Write-Host "Deployment Failed."
-                  $deploymentResults += [PSCustomObject]@{
-                      iFlowName = $iflowId
-                      Status = "Failed"
-                      StatusCode = $status
-                      Response = $msg
-                  }
-              }
-              Start-Sleep -Seconds 2
-          }
-          $deploymentResults |
-              ConvertTo-Json -Depth 10 |
-              Out-File "$resultsDir/deployment-summary.json"
-          Write-Host ""
-          Write-Host "Deployment Summary"
-          $deploymentResults | Format-Table
-          $failed = $deploymentResults | Where-Object Status -eq "Failed"
-          if ($failed.Count -gt 0) {
-              throw "$($failed.Count) deployment(s) failed."
-          }
-      - name: Upload Deployment Results
-        if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: deployment-results
-          path: deployment-results
+          fetch-depth: 0
+
+      ##################################################
+      # Detect merged iFlows
+      ##################################################
+
+      - name: Find merged iFlows
+        id: detect
+        shell: bash
+        run: |
+
+          git diff \
+          ${{ github.event.pull_request.base.sha }} \
+          ${{ github.event.pull_request.merge_commit_sha }} \
+          --name-only \
+          | grep ".zip$" \
+          > iflows.txt
+
+          if [ ! -s iflows.txt ]; then
+            echo "No iFlows found."
+            exit 0
+          fi
+
+          cat iflows.txt
+
+      ##################################################
+      # Get OAuth Token
+      ##################################################
+
+      - name: Get OAuth Token
+        shell: bash
+        env:
+          TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
+        run: |
+          echo "TOKEN_URL length: ${#TOKEN_URL}"
+          echo "CLIENT_ID length: ${#CLIENT_ID}"
+          echo "CLIENT_SECRET length: ${#CLIENT_SECRET}"
+          if [ -z "$TOKEN_URL" ]; then
+          echo "TOKEN_URL is empty"
+          exit 1
+          fi
+          if [ -z "$CLIENT_ID" ]; then
+          echo "CLIENT_ID is empty"
+          exit 1
+          fi
+          if [ -z "$CLIENT_SECRET" ]; then
+          echo "CLIENT_SECRET is empty"
+          exit 1
+          fi
+          TOKEN_URL="${TOKEN_URL%/}"
+          if [[ "$TOKEN_URL" != */oauth/token ]]; then
+          TOKEN_URL="$TOKEN_URL/oauth/token"
+          fi
+          echo "Calling token endpoint..."
+          curl -v \
+          -u "$CLIENT_ID:$CLIENT_SECRET" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "grant_type=client_credentials" \
+          "$TOKEN_URL"
+
+
+      ##################################################
+      # Upload ZIP
+      ##################################################
+
+      - name: Upload to CTMS
+        shell: bash
+        env:
+          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+        run: |
+
+          while read ZIP
+          do
+
+            echo "Uploading $ZIP"
+
+            RESPONSE=$(curl -s \
+              -X POST \
+              "$API_URL/v2/files/upload" \
+              -H "Authorization: Bearer $TOKEN" \
+              -F "file=@${ZIP}")
+
+            echo "$RESPONSE"
+
+          done < iflows.txt
+
+      ##################################################
+      # Create Transport Request
+      ##################################################
+
+      - name: Create TR
+        shell: bash
+        env:
+          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+          #NODE: ${{ secrets.CTMS_NODE_NAME_QA }}
+        run: |
+
+          echo "Create Transport Request"
+
+          # Loop all uploaded fileIds
+
+          # POST /v2/nodes/upload
+
+      ##################################################
+      # Wait until deployment completed
+      ##################################################
+
+      - name: Wait for deployment
+        shell: bash
+        run: |
+
+          echo "Polling TR..."
+
+          # GET /transportRequests/{id}
+
+      ##################################################
+      # Archive deployed iFlows
+      ##################################################
+
+      - name: Archive deployed iFlows
+        shell: bash
+        run: |
+
+          mkdir -p ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}
+
+          while read ZIP
+          do
+
+            DIR=$(dirname "$ZIP")
+
+            mv "$DIR" \
+               ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}/
+
+          done < iflows.txt
+
+      ##################################################
+      # Commit archive
+      ##################################################
+
+      - name: Commit archive
+        shell: bash
+        run: |
+
+          git config user.name github-actions
+
+          git config user.email github-actions@github.com
+
+          git add .
+
+          git commit -m "QA Deployment"
+
+          git push
+
+      ##################################################
+      # Tag deployment
+      ##################################################
+
+      - name: Create Tag
+        shell: bash
+        run: |
+
+          TAG=qa-$(date +%Y%m%d-%H%M)
+
+          git tag $TAG
+
+          git push origin $TAG
