@@ -23,9 +23,9 @@ jobs:
       - name: Get OAuth Token
         shell: bash
         env:
-          TOKEN_URL: ${{ secrets.QA_SAP_BTP_TOKEN_URL }}
-          CLIENT_ID: ${{ secrets.QA_SAP_BTP_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.QA_SAP_BTP_CLIENT_SECRET }}
+          TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
 
           TOKEN_URL="${TOKEN_URL%/}"
