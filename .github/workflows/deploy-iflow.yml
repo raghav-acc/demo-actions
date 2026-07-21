@@ -31,12 +31,6 @@ jobs:
         #with:
         #  fetch-depth: 2 # Fetch the merge commit and its immediate parent to detect changes
 
-      - name: Setup Git & Tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "::notice::Checking for modified iFlow binaries..."
-
  
       - name: Validate secrets
         if: steps.detect_changes.outputs.has_changes == 'true'
