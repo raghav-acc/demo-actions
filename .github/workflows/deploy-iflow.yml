@@ -88,27 +88,33 @@ jobs:
           CPI_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
 
+          API_BASE="${CPI_URL%/}"
+
           while read ZIP
           do
 
-            echo "Uploading $ZIP"
+          echo "======================================"
+          echo "Uploading: $ZIP"
+          echo "URL: $API_BASE/api/v1/IntegrationDesigntimeArtifacts"
 
-            HTTP=$(curl -s \
-              -o response.json \
-              -w "%{http_code}" \
-              -X POST \
-              "$CPI_URL/api/v1/IntegrationDesigntimeArtifacts" \
-              -H "Authorization: Bearer $TOKEN" \
-              -F "file=@${ZIP}")
+          HTTP_CODE=$(curl -sS \
+            -o response.json \
+            -w "%{http_code}" \
+            -X POST \
+            "$API_BASE/api/v1/IntegrationDesigntimeArtifacts" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/json" \
+            -F "file=@${ZIP}")
 
-            cat response.json
+          echo "HTTP Status: $HTTP_CODE"
+          cat response.json
 
-            if [ "$HTTP" != "201" ] && [ "$HTTP" != "200" ]; then
-                echo "Upload failed."
-                exit 1
-            fi
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+            echo "Upload failed."
+            exit 1
+          fi
 
-          done < iflows.txt
+    done < iflows.txt
 
       ###########################################################
       # Deploy
@@ -142,7 +148,7 @@ jobs:
                 exit 1
             fi
 
-          done < iflows.txt
+            done < iflows.txt
 
       ###########################################################
       # Verify
