@@ -85,7 +85,7 @@ jobs:
       - name: Upload to QA
         shell: bash
         env:
-          CPI_URL: ${{ secrets.QA_CPI_API_BASE_URL }}
+          CPI_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
 
           while read ZIP
@@ -117,7 +117,7 @@ jobs:
       - name: Deploy iFlows
         shell: bash
         env:
-          CPI_URL: ${{ secrets.QA_CPI_API_BASE_URL }}
+          CPI_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
 
           while read ZIP
