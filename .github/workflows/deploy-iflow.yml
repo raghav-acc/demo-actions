@@ -2,68 +2,155 @@ name: Deploy iFlows to QA
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+
+permissions:
+  contents: read
 
 jobs:
-  deploy-iflows:
+  deploy:
     runs-on: ubuntu-latest
-
-    env:
-      SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-      SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-      SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
-      SAP_CPI_API_BASE_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+    environment: qa
 
     steps:
-      - name: Checkout repository
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Get OAuth Access Token
-        run: |
-          RESPONSE=$(curl -s -X POST "${SAP_BTP_TOKEN_URL}" \
-          -H "Content-Type: application/x-www-form-urlencoded" \
-          -d "grant_type=client_credentials" \
-          -d "client_id=${SAP_BTP_OAUTH_CLIENT_ID}" \
-          -d "client_secret=${SAP_BTP_OAUTH_CLIENT_SECRET}")
+      ###########################################################
+      # Authenticate
+      ###########################################################
 
-          echo "$RESPONSE"
+      - name: Get OAuth Token
+        shell: bash
+        env:
+          TOKEN_URL: ${{ secrets.QA_SAP_BTP_TOKEN_URL }}
+          CLIENT_ID: ${{ secrets.QA_SAP_BTP_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.QA_SAP_BTP_CLIENT_SECRET }}
+        run: |
+
+          TOKEN_URL="${TOKEN_URL%/}"
+          [[ "$TOKEN_URL" != */oauth/token ]] && TOKEN_URL="$TOKEN_URL/oauth/token"
+
+          RESPONSE=$(curl -s \
+            -u "$CLIENT_ID:$CLIENT_SECRET" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials" \
+            "$TOKEN_URL")
 
           TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
 
           if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-          echo "Failed to obtain access token"
-          exit 1
+            echo "Failed to get OAuth token"
+            echo "$RESPONSE"
+            exit 1
           fi
 
-          echo "ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
+          echo "::add-mask::$TOKEN"
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      ###########################################################
+      # Find all ZIP files
+      ###########################################################
+
+      - name: Find iFlows
+        shell: bash
+        run: |
+
+          find btp-iflows -name "*.zip" > iflows.txt
+
+          cat iflows.txt
+
+          if [ ! -s iflows.txt ]; then
+            echo "No iFlows found."
+            exit 1
+          fi
+
+      ###########################################################
+      # Upload
+      ###########################################################
+
+      - name: Upload to QA
+        shell: bash
+        env:
+          CPI_URL: ${{ secrets.QA_CPI_API_BASE_URL }}
+        run: |
+
+          while read ZIP
+          do
+
+            echo "Uploading $ZIP"
+
+            HTTP=$(curl -s \
+              -o response.json \
+              -w "%{http_code}" \
+              -X POST \
+              "$CPI_URL/api/v1/IntegrationDesigntimeArtifacts" \
+              -H "Authorization: Bearer $TOKEN" \
+              -F "file=@${ZIP}")
+
+            cat response.json
+
+            if [ "$HTTP" != "201" ] && [ "$HTTP" != "200" ]; then
+                echo "Upload failed."
+                exit 1
+            fi
+
+          done < iflows.txt
+
+      ###########################################################
+      # Deploy
+      ###########################################################
 
       - name: Deploy iFlows
+        shell: bash
+        env:
+          CPI_URL: ${{ secrets.QA_CPI_API_BASE_URL }}
         run: |
-          shopt -s globstar nullglob
 
-          for FILE in **/*.zip; do
-            IFLOW_ID=$(basename "$FILE" .zip)
+          while read ZIP
+          do
 
-            echo "Deploying $IFLOW_ID..."
+            NAME=$(basename "$ZIP")
+            NAME=${NAME%%_*}
 
-            HTTP_CODE=$(curl -s -o response.txt -w "%{http_code}" \
+            echo "Deploying $NAME"
+
+            HTTP=$(curl -s \
+              -o deploy.json \
+              -w "%{http_code}" \
               -X POST \
-              "${SAP_CPI_API_BASE_URL}/IntegrationDesigntimeArtifacts(Id='${IFLOW_ID}',Version='active')/\$value" \
-              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-              -H "Content-Type: application/zip" \
-              --data-binary @"$FILE")
+              "$CPI_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id=$NAME&Version=active" \
+              -H "Authorization: Bearer $TOKEN")
 
-            if [[ "$HTTP_CODE" =~ ^20[01]$ ]]; then
-              echo "Successfully deployed $IFLOW_ID"
-            else
-              echo "Deployment failed for $IFLOW_ID"
-              cat response.txt
-              exit 1
+            cat deploy.json
+
+            if [ "$HTTP" != "200" ]; then
+                echo "Deployment failed"
+                exit 1
             fi
-          done
 
-      - name: Cleanup
-        if: always()
-        run: rm -f response.txt
+          done < iflows.txt
+
+      ###########################################################
+      # Verify
+      ###########################################################
+
+      - name: Verify Deployment
+        shell: bash
+        env:
+          CPI_URL: ${{ secrets.QA_CPI_API_BASE_URL }}
+        run: |
+
+          while read ZIP
+          do
+
+            NAME=$(basename "$ZIP")
+            NAME=${NAME%%_*}
+
+            echo "Checking $NAME"
+
+            curl \
+              -H "Authorization: Bearer $TOKEN" \
+              "$CPI_URL/api/v1/IntegrationRuntimeArtifacts('$NAME')"
+
+          done < iflows.txt
