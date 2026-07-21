@@ -5,7 +5,7 @@ on:
     branches:
       - develop
     paths:
-      - 'iflow/*.zip'
+      - 'btp-iflows/**/*.zip'
 
   workflow_dispatch:
     inputs:
@@ -27,15 +27,15 @@ concurrency:
 
 env:
   SOURCE_BRANCH: develop
-  DOWNLOAD_DIR: iflow
-  ARCHIVE_DIR: iflow-archive
+  DOWNLOAD_DIR: btp-iflows
+  ARCHIVE_DIR: btp-iflows-archive
   ARCHIVE_STATUS_TAG: "deployed-to-qa-awaiting-prod"
 
 jobs:
   deploy-to-qa:
     name: Deploy iFlows to QA via CTMS
     runs-on: ubuntu-latest
-    #environment: qa
+    environment: qa
 
     outputs:
       tr_numbers: ${{ steps.deploy.outputs.tr_numbers }}
@@ -171,3 +171,441 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "CTMS_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
           echo "CTMS Token obtained."
+
+      - name: Deploy each iFlow to QA via CTMS
+        id: deploy
+        if: env.SKIP_DEPLOY != 'true'
+        shell: bash
+        env:
+          CPI_DEV_ENDPOINT: ${{ secrets.CPI_DEV_ENDPOINT }}
+          #CTMS_NODE_NAME_QA: ${{ secrets.CTMS_NODE_NAME_QA }}
+          #CTMS_NAMED_USER: ${{ secrets.CTMS_NAMED_USER }}
+        run: |
+          set -euo pipefail
+
+          CPI_DEV_ENDPOINT="${CPI_DEV_ENDPOINT%/}"
+          NAMED_USER="${CTMS_NAMED_USER:-github-actions[bot]}"
+
+          echo "Starting CTMS deployment to QA node: $CTMS_NODE_NAME_QA"
+
+          echo "[]" > deployment-results.json
+          SUCCESS_COUNT=0
+          FAILED_COUNT=0
+          TR_NUMBERS=""
+
+          while IFS= read -r ZIP_FILE; do
+            [ -z "$ZIP_FILE" ] && continue
+            [ ! -f "$ZIP_FILE" ] && { echo "Skipping missing: $ZIP_FILE"; continue; }
+
+            # Extract IFLOW_ID and VERSION from path
+            # Format: btp-iflows/<IFLOW_ID>/<VERSION>/<IFLOW_ID>_<VERSION>.zip
+            IFLOW_DIR=$(dirname "$ZIP_FILE")
+            IFLOW_VERSION=$(basename "$IFLOW_DIR")
+            IFLOW_ID=$(basename "$(dirname "$IFLOW_DIR")")
+
+            echo "Deploying: $IFLOW_ID | v$IFLOW_VERSION"
+
+            TR_DESCRIPTION="Deploy $IFLOW_ID $IFLOW_VERSION | commit=${GITHUB_SHA:0:7} | run=$GITHUB_RUN_ID"
+
+            # ═══ STEP 1: Upload to CTMS ═══
+            echo "Uploading ZIP to CTMS..."
+            UPLOAD_RESPONSE=$(curl -sS \
+              --connect-timeout 15 \
+              --max-time 120 \
+              -X POST "$CPI_DEV_ENDPOINT/v2/files/upload" \
+              -H "Authorization: Bearer $CTMS_ACCESS_TOKEN" \
+              -H "Accept: application/json" \
+              -F "file=@$ZIP_FILE" \
+              -F "namedUser=$NAMED_USER" 2>/dev/null || echo '{}')
+
+            FILE_ID=$(echo "$UPLOAD_RESPONSE" | jq -r '.fileId // empty')
+
+            if [ -z "$FILE_ID" ]; then
+              echo "Upload failed"
+              echo "$UPLOAD_RESPONSE"
+              FAILED_COUNT=$((FAILED_COUNT + 1))
+              jq --arg id "$IFLOW_ID" --arg ver "$IFLOW_VERSION" --arg zip "$ZIP_FILE" \
+                 --arg stage "upload" --arg status "Failed" \
+                 '. + [{id:$id, version:$ver, zipFile:$zip, failedStage:$stage, status:$status}]' \
+                 deployment-results.json > tmp.json && mv tmp.json deployment-results.json
+              continue
+            fi
+
+            echo "Uploaded. fileId=$FILE_ID"
+
+            # ═══ STEP 2: Create TR ═══
+            echo "Creating Transport Request..."
+            TR_REQUEST=$(jq -n \
+              --arg node "$CTMS_NODE_NAME_QA" \
+              --arg desc "$TR_DESCRIPTION" \
+              --arg user "$NAMED_USER" \
+              --arg fid "$FILE_ID" \
+              '{
+                nodeName: $node,
+                contentType: "MTA",
+                storageType: "FILE",
+                description: $desc,
+                namedUser: $user,
+                entries: [{ uri: $fid }]
+              }')
+
+            TR_RESPONSE=$(curl -sS \
+              --connect-timeout 15 \
+              --max-time 60 \
+              -X POST "$CPI_DEV_ENDPOINT/v2/nodes/upload" \
+              -H "Authorization: Bearer $CTMS_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -H "Accept: application/json" \
+              -d "$TR_REQUEST" 2>/dev/null || echo '{}')
+
+            TR_ID=$(echo "$TR_RESPONSE" | jq -r '.transportRequestId // .id // empty')
+
+            if [ -z "$TR_ID" ]; then
+              echo "TR creation failed"
+              echo "$TR_RESPONSE"
+              FAILED_COUNT=$((FAILED_COUNT + 1))
+              jq --arg id "$IFLOW_ID" --arg ver "$IFLOW_VERSION" --arg zip "$ZIP_FILE" \
+                 --arg stage "tr-creation" --arg status "Failed" \
+                 '. + [{id:$id, version:$ver, zipFile:$zip, failedStage:$stage, status:$status}]' \
+                 deployment-results.json > tmp.json && mv tmp.json deployment-results.json
+              continue
+            fi
+
+            echo "TR created: $TR_ID"
+
+            # ═══ STEP 3: Poll TR status ═══
+            echo "Waiting for TR import to complete..."
+            FINAL_STATUS=""
+            for TRY in $(seq 1 30); do
+              STATUS_RESPONSE=$(curl -sS \
+                --connect-timeout 15 \
+                --max-time 45 \
+                -X GET "$CPI_DEV_ENDPOINT/v2/transportRequests/$TR_ID" \
+                -H "Authorization: Bearer $CTMS_ACCESS_TOKEN" \
+                -H "Accept: application/json" 2>/dev/null || echo '{}')
+
+              CURRENT_STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // .transportStatus // "Unknown"')
+
+              case "$CURRENT_STATUS" in
+                Finished|SUCCESS|SUCCESSFUL|IMPORTED|IMPORT_SUCCESS)
+                  FINAL_STATUS="Success"
+                  break
+                  ;;
+                Failed|FAILED|ERROR|IMPORT_FAILED|IMPORT_ERROR)
+                  FINAL_STATUS="Failed"
+                  break
+                  ;;
+              esac
+
+              echo "     Attempt $TRY: Status=$CURRENT_STATUS"
+              sleep 10
+            done
+
+            [ -z "$FINAL_STATUS" ] && FINAL_STATUS="Timeout"
+
+            if [ "$FINAL_STATUS" = "Success" ]; then
+              echo "TR $TR_ID: Deployment SUCCESS"
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              TR_NUMBERS="${TR_NUMBERS}${TR_NUMBERS:+, }$TR_ID"
+
+              jq --arg id "$IFLOW_ID" --arg ver "$IFLOW_VERSION" --arg zip "$ZIP_FILE" \
+                 --arg trId "$TR_ID" --arg status "$FINAL_STATUS" \
+                 --arg deployedAt "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+                 '. + [{
+                    id:$id, version:$ver, zipFile:$zip,
+                    transportRequestId:$trId,
+                    deployedAt:$deployedAt,
+                    status:$status
+                  }]' \
+                 deployment-results.json > tmp.json && mv tmp.json deployment-results.json
+            else
+              echo "TR $TR_ID: Deployment $FINAL_STATUS"
+              FAILED_COUNT=$((FAILED_COUNT + 1))
+              jq --arg id "$IFLOW_ID" --arg ver "$IFLOW_VERSION" --arg zip "$ZIP_FILE" \
+                 --arg trId "$TR_ID" --arg status "$FINAL_STATUS" \
+                 --arg stage "tr-import" \
+                 '. + [{
+                    id:$id, version:$ver, zipFile:$zip,
+                    transportRequestId:$trId,
+                    failedStage:$stage,
+                    status:$status
+                  }]' \
+                 deployment-results.json > tmp.json && mv tmp.json deployment-results.json
+            fi
+          done < iflows-to-deploy.txt
+
+          # ═══ Summary ═══
+          echo "DEPLOYMENT SUMMARY"
+          echo "Successful : $SUCCESS_COUNT"
+          echo "Failed     : $FAILED_COUNT"
+          echo "TR Numbers : $TR_NUMBERS"
+
+          # Set outputs
+          echo "tr_numbers=$TR_NUMBERS" >> "$GITHUB_OUTPUT"
+          echo "success_count=$SUCCESS_COUNT" >> "$GITHUB_OUTPUT"
+          echo "failed_count=$FAILED_COUNT" >> "$GITHUB_OUTPUT"
+
+          if [ "$FAILED_COUNT" -gt 0 ] && [ "$SUCCESS_COUNT" -eq 0 ]; then
+            echo "deployment_status=Failed" >> "$GITHUB_OUTPUT"
+            echo "::error title=Deployment Failed::All iFlow deployments failed."
+            exit 1
+          elif [ "$FAILED_COUNT" -gt 0 ]; then
+            echo "deployment_status=Partial" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Partial Deployment::$FAILED_COUNT iFlows failed."
+          else
+            echo "deployment_status=Success" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Move deployed iFlows to archive with status tag
+        if: env.SKIP_DEPLOY != 'true' && steps.deploy.outputs.success_count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARCHIVE_TARGET="$ARCHIVE_DIR/qa/$ARCHIVE_STATUS_TAG"
+          mkdir -p "$ARCHIVE_TARGET"
+
+          echo "Moving successfully deployed iFlows to archive..."
+
+          jq -c '.[] | select(.status == "Success")' deployment-results.json | \
+          while read -r item; do
+            IFLOW_ID=$(echo "$item" | jq -r '.id')
+            VERSION=$(echo "$item" | jq -r '.version')
+            TR_ID=$(echo "$item" | jq -r '.transportRequestId')
+
+            SAFE_ID=$(echo "$IFLOW_ID" | tr -cd '[:alnum:]_.-')
+            SAFE_VER=$(echo "$VERSION" | tr -cd '[:alnum:]_.-')
+
+            SOURCE_DIR="$DOWNLOAD_DIR/$SAFE_ID/$SAFE_VER"
+            TARGET_DIR="$ARCHIVE_TARGET/$SAFE_ID/$SAFE_VER"
+
+            if [ ! -d "$SOURCE_DIR" ]; then
+              echo "Source not found: $SOURCE_DIR"
+              continue
+            fi
+
+            mkdir -p "$(dirname "$TARGET_DIR")"
+            mv "$SOURCE_DIR" "$TARGET_DIR"
+            echo "Moved: $SOURCE_DIR → $TARGET_DIR"
+
+            # Write metadata file with TR info
+            cat > "$TARGET_DIR/deployment-info.json" <<EOF
+{
+  "iflowId": "$IFLOW_ID",
+  "version": "$VERSION",
+  "transportRequestId": "$TR_ID",
+  "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "deployedBy": "github-actions[bot]",
+  "status": "$ARCHIVE_STATUS_TAG",
+  "commitSha": "$GITHUB_SHA",
+  "workflowRun": "$GITHUB_RUN_ID"
+}
+EOF
+
+            # Clean up empty parent
+            PARENT_DIR="$DOWNLOAD_DIR/$SAFE_ID"
+            if [ -d "$PARENT_DIR" ] && [ -z "$(ls -A "$PARENT_DIR" 2>/dev/null)" ]; then
+              rmdir "$PARENT_DIR"
+              echo "  🧹 Cleaned empty: $PARENT_DIR"
+            fi
+          done
+
+          echo "✅ Archive move complete."
+
+      - name: Commit and push archive changes
+        if: env.SKIP_DEPLOY != 'true' && steps.deploy.outputs.success_count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git add "$DOWNLOAD_DIR" "$ARCHIVE_DIR" 2>/dev/null || true
+
+          if git diff --staged --quiet; then
+            echo "::notice::Nothing to commit for archive."
+            exit 0
+          fi
+
+          TR_NUMBERS="${{ steps.deploy.outputs.tr_numbers }}"
+          git commit -m "Deploy to QA: TR=${TR_NUMBERS} | ${{ steps.deploy.outputs.success_count }} iFlows"
+
+          git fetch origin "$SOURCE_BRANCH"
+          if ! git pull --rebase origin "$SOURCE_BRANCH"; then
+            git rebase --abort || true
+            echo "❌ Rebase conflict on push."
+            exit 1
+          fi
+
+          git push origin "$SOURCE_BRANCH"
+          echo "🚀 Archive changes pushed to $SOURCE_BRANCH"
+
+      - name: Create Git tag with TR number
+        if: env.SKIP_DEPLOY != 'true' && steps.deploy.outputs.success_count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG_NAME="qa-deploy-$(date -u +"%Y%m%d-%H%M%S")-run${GITHUB_RUN_ID}"
+          TR_NUMBERS="${{ steps.deploy.outputs.tr_numbers }}"
+
+          git tag -a "$TAG_NAME" -m "QA Deployment - TR: $TR_NUMBERS - Success: ${{ steps.deploy.outputs.success_count }} - Failed: ${{ steps.deploy.outputs.failed_count }}"
+          git push origin "$TAG_NAME"
+
+          echo "🏷️  Tag created: $TAG_NAME"
+
+      - name: Prepare email content
+        if: always() && env.SKIP_DEPLOY != 'true'
+        id: email_prep
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STATUS="${{ steps.deploy.outputs.deployment_status }}"
+          SUCCESS="${{ steps.deploy.outputs.success_count }}"
+          FAILED="${{ steps.deploy.outputs.failed_count }}"
+          TR_NUMBERS="${{ steps.deploy.outputs.tr_numbers }}"
+
+          case "$STATUS" in
+            Success)   ICON="✅"; SUBJECT_PREFIX="[SUCCESS]" ;;
+            Partial)   ICON="⚠️"; SUBJECT_PREFIX="[PARTIAL]" ;;
+            Failed)    ICON="❌"; SUBJECT_PREFIX="[FAILED]" ;;
+            *)         ICON="❓"; SUBJECT_PREFIX="[UNKNOWN]" ;;
+          esac
+
+          SUBJECT="$SUBJECT_PREFIX QA Deployment Report - $(date -u +"%Y-%m-%d %H:%M UTC")"
+          echo "subject=$SUBJECT" >> "$GITHUB_OUTPUT"
+
+          # Build HTML email body
+          cat > email-body.html <<EOF
+<!DOCTYPE html>
+<html>
+<head><style>
+  body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+  .header { background: #f4f4f4; padding: 20px; border-left: 4px solid #0078d4; }
+  table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+  th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+  th { background: #0078d4; color: white; }
+  .success { color: #107c10; font-weight: bold; }
+  .failed { color: #d13438; font-weight: bold; }
+  .info-box { background: #f0f6ff; padding: 15px; border-radius: 5px; margin: 10px 0; }
+</style></head>
+<body>
+  <div class="header">
+    <h2>$ICON SAP CPI iFlow QA Deployment Report</h2>
+    <p><strong>Overall Status:</strong> <span class="$([ "$STATUS" = "Success" ] && echo success || echo failed)">$STATUS</span></p>
+  </div>
+
+  <div class="info-box">
+    <p><strong>📅 Deployment Time:</strong> $(date -u +"%Y-%m-%d %H:%M:%S UTC")</p>
+    <p><strong>🌿 Source Branch:</strong> $SOURCE_BRANCH</p>
+    <p><strong>🎯 Environment:</strong> QA</p>
+    <p><strong>📊 Total Deployments:</strong> $((SUCCESS + FAILED))</p>
+    <p><strong>✅ Successful:</strong> $SUCCESS</p>
+    <p><strong>❌ Failed:</strong> $FAILED</p>
+    <p><strong>🎫 Transport Requests:</strong> $TR_NUMBERS</p>
+    <p><strong>🔗 Commit:</strong> ${GITHUB_SHA:0:7}</p>
+    <p><strong>🔗 Workflow Run:</strong>  github.run_id }}">View in GitHub</a></p>
+  </div>
+
+  <h3>📋 Deployment Details</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>iFlow ID</th>
+        <th>Version</th>
+        <th>TR Number</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+EOF
+
+          # Add row for each deployment
+          jq -c '.[]' deployment-results.json | while read -r item; do
+            ID=$(echo "$item" | jq -r '.id')
+            VER=$(echo "$item" | jq -r '.version')
+            TR=$(echo "$item" | jq -r '.transportRequestId // "-"')
+            ST=$(echo "$item" | jq -r '.status')
+            STAGE=$(echo "$item" | jq -r '.failedStage // ""')
+
+            CLASS=$([ "$ST" = "Success" ] && echo "success" || echo "failed")
+            STATUS_TEXT="$ST"
+            [ -n "$STAGE" ] && STATUS_TEXT="$ST (at $STAGE)"
+
+            echo "      <tr>
+        <td>$ID</td>
+        <td>$VER</td>
+        <td>$TR</td>
+        <td class=\"$CLASS\">$STATUS_TEXT</td>
+      </tr>" >> email-body.html
+          done
+
+          cat >> email-body.html <<EOF
+    </tbody>
+  </table>
+
+  <div class="info-box">
+    <p><strong>📁 Archive Status:</strong> Deployed iFlows moved to <code>$ARCHIVE_DIR/qa/$ARCHIVE_STATUS_TAG/</code></p>
+    <p><strong>🔜 Next Steps:</strong> Awaiting PROD deployment approval.</p>
+  </div>
+
+  <p style="color: #666; font-size: 0.9em; margin-top: 30px;">
+    <em>This is an automated notification from the SAP CPI CI/CD Pipeline.</em>
+  </p>
+</body>
+</html>
+EOF
+
+          echo "✅ Email content prepared"
+
+      - name: Send email notification
+        if: always() && env.SKIP_DEPLOY != 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: ${{ steps.email_prep.outputs.subject }}
+          html_body: file://email-body.html
+          from: ${{ secrets.EMAIL_FROM }}
+          to: ${{ secrets.EMAIL_DISTRIBUTION_LIST }}
+          reply_to: ${{ secrets.EMAIL_FROM }}
+          ignore_cert: false
+
+      - name: Rollback on failure
+        if: failure() && env.SKIP_DEPLOY != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔄 Deployment failed. Checking if archive rollback is needed..."
+
+          # If some iFlows were moved to archive but final commit failed, restore them
+          if [ -f deployment-results.json ]; then
+            jq -c '.[] | select(.status == "Success")' deployment-results.json | \
+            while read -r item; do
+              IFLOW_ID=$(echo "$item" | jq -r '.id')
+              VERSION=$(echo "$item" | jq -r '.version')
+
+              SAFE_ID=$(echo "$IFLOW_ID" | tr -cd '[:alnum:]_.-')
+              SAFE_VER=$(echo "$VERSION" | tr -cd '[:alnum:]_.-')
+
+              ARCHIVED="$ARCHIVE_DIR/qa/$ARCHIVE_STATUS_TAG/$SAFE_ID/$SAFE_VER"
+              ORIGINAL="$DOWNLOAD_DIR/$SAFE_ID/$SAFE_VER"
+
+              if [ -d "$ARCHIVED" ] && [ ! -d "$ORIGINAL" ]; then
+                mkdir -p "$(dirname "$ORIGINAL")"
+                mv "$ARCHIVED" "$ORIGINAL"
+                echo "  🔄 Rolled back: $ARCHIVED → $ORIGINAL"
+              fi
+            done
+          fi
+
+          echo "::warning title=Rollback complete::Failed deployments have been rolled back."
+
+      - name: Report clean run
+        if: env.SKIP_DEPLOY == 'true'
+        shell: bash
+        run: |
+          echo "::notice title=Nothing to Deploy::No iFlows required deployment."
+          echo "✅ Pipeline status: SUCCESS"
