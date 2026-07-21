@@ -28,7 +28,7 @@ concurrency:
 env:
   SOURCE_BRANCH: develop
   DOWNLOAD_DIR: iflow
-  ARCHIVE_DIR: btp-iflows-archive
+  ARCHIVE_DIR: iflow-archive
   ARCHIVE_STATUS_TAG: "deployed-to-qa-awaiting-prod"
 
 jobs:
