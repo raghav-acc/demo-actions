@@ -64,7 +64,7 @@ jobs:
           echo "CTMS Deployment Configuration"
           echo "Trigger        : ${{ github.event_name }}"
           echo "Source branch  : $SOURCE_BRANCH"
-          echo "QA Node        : $CTMS_NODE_NAME_QA"
+          #echo "QA Node        : $CTMS_NODE_NAME_QA"
           echo "Archive dir    : $ARCHIVE_DIR"
 
           check_secret() {
@@ -83,6 +83,6 @@ jobs:
           check_secret "CPI_RUNTIME_CLIENT_ID" "$CPI_RUNTIME_CLIENT_ID"
           check_secret "CPI_RUNTIME_CLIENT_SECRET" "$CPI_RUNTIME_CLIENT_SECRET"
           check_secret "CPI_DEV_ENDPOINT" "$CPI_DEV_ENDPOINT" "https://"
-          check_secret "CTMS_NODE_NAME_QA" "$CTMS_NODE_NAME_QA"
+          #check_secret "CTMS_NODE_NAME_QA" "$CTMS_NODE_NAME_QA"
 
           echo "All CTMS secrets validated."
