@@ -63,21 +63,36 @@ jobs:
       - name: Get OAuth Token
         shell: bash
         env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.CTMS_SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.CTMS_SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.CTMS_SAP_BTP_OAUTH_CLIENT_SECRET }}
+          TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
+          CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
+          echo "TOKEN_URL length: ${#TOKEN_URL}"
+          echo "CLIENT_ID length: ${#CLIENT_ID}"
+          echo "CLIENT_SECRET length: ${#CLIENT_SECRET}"
+          if [ -z "$TOKEN_URL" ]; then
+          echo "TOKEN_URL is empty"
+          exit 1
+          fi
+          if [ -z "$CLIENT_ID" ]; then
+          echo "CLIENT_ID is empty"
+          exit 1
+          fi
+          if [ -z "$CLIENT_SECRET" ]; then
+          echo "CLIENT_SECRET is empty"
+          exit 1
+          fi
+          TOKEN_URL="${TOKEN_URL%/}"
+          if [[ "$TOKEN_URL" != */oauth/token ]]; then
+          TOKEN_URL="$TOKEN_URL/oauth/token"
+          fi
+          echo "Calling token endpoint..."
+          curl -v \
+          -u "$CLIENT_ID:$CLIENT_SECRET" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "grant_type=client_credentials" \
+          "$TOKEN_URL"
 
-          RESPONSE=$(curl -s \
-            -X POST "$SAP_BTP_TOKEN_URL" \
-            -u "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
-            -d grant_type=client_credentials)
-
-          TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
-
-          echo "::add-mask::$TOKEN"
-
-          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
       ##################################################
       # Upload ZIP
