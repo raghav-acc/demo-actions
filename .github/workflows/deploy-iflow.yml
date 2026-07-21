@@ -1,134 +1,187 @@
 name: Deploy iFlows to QA
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+    types:
+      - closed
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: deploy-qa
+  cancel-in-progress: false
+
+env:
+  SOURCE_BRANCH: feature
+  IFLOW_DIR: btp-iflows
+  ARCHIVE_DIR: archive
+  ARCHIVE_TAG: ReadyForProd
 
 jobs:
-  deploy:
+
+  deploy-qa:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    environment: qa
+    environment: dev
 
     steps:
-
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      ##################################################
+      # Detect merged iFlows
+      ##################################################
+
+      - name: Find merged iFlows
+        id: detect
+        shell: bash
+        run: |
+
+          git diff \
+          ${{ github.event.pull_request.base.sha }} \
+          ${{ github.event.pull_request.merge_commit_sha }} \
+          --name-only \
+          | grep ".zip$" \
+          > iflows.txt
+
+          if [ ! -s iflows.txt ]; then
+            echo "No iFlows found."
+            exit 0
+          fi
+
+          cat iflows.txt
+
+      ##################################################
+      # Get OAuth Token
+      ##################################################
 
       - name: Get OAuth Token
         shell: bash
         env:
-          SAP_BTP_TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
+          SAP_BTP_TOKEN_URL: ${{ secrets.CTMS_SAP_BTP_TOKEN_URL }}
+          SAP_BTP_OAUTH_CLIENT_ID: ${{ secrets.CTMS_SAP_BTP_OAUTH_CLIENT_ID }}
+          SAP_BTP_OAUTH_CLIENT_SECRET: ${{ secrets.CTMS_SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
-          set -e
-
-          TOKEN_URL="${SAP_BTP_TOKEN_URL%/}"
-          [[ "$TOKEN_URL" != */oauth/token ]] && TOKEN_URL="$TOKEN_URL/oauth/token"
 
           RESPONSE=$(curl -s \
+            -X POST "$SAP_BTP_TOKEN_URL" \
             -u "$SAP_BTP_OAUTH_CLIENT_ID:$SAP_BTP_OAUTH_CLIENT_SECRET" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            "$TOKEN_URL")
+            -d grant_type=client_credentials)
 
           TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
 
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "Unable to get OAuth token"
-            echo "$RESPONSE"
-            exit 1
-          fi
-
           echo "::add-mask::$TOKEN"
+
           echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
-      - name: Find iFlows
-        run: |
-          find btp-iflows -name "*.zip" > iflows.txt
-          cat iflows.txt
+      ##################################################
+      # Upload ZIP
+      ##################################################
 
-      - name: Upload and Deploy
+      - name: Upload to CTMS
         shell: bash
         env:
-          CPI_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
-
-          API_BASE="${CPI_URL%/}"
 
           while read ZIP
           do
 
-            [ -z "$ZIP" ] && continue
+            echo "Uploading $ZIP"
 
-            FILE=$(basename "$ZIP")
-
-            VERSION=${FILE##*_}
-            VERSION=${VERSION%.zip}
-
-            IFLOW=$(echo "$FILE" | sed "s/_${VERSION}.zip//")
-
-            echo "======================================"
-            echo "iFlow   : $IFLOW"
-            echo "Version : $VERSION"
-
-            echo "Uploading..."
-
-            HTTP=$(curl -sS \
-              -o upload.json \
-              -w "%{http_code}" \
+            RESPONSE=$(curl -s \
               -X POST \
-              "$API_BASE/api/v1/IntegrationDesigntimeArtifacts" \
+              "$API_URL/v2/files/upload" \
               -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/json" \
               -F "file=@${ZIP}")
 
-            echo "Upload HTTP: $HTTP"
-            cat upload.json
-
-            if [ "$HTTP" != "200" ] && [ "$HTTP" != "201" ]; then
-              echo "Upload failed."
-              exit 1
-            fi
-
-            echo "Deploying..."
-
-            HTTP=$(curl -sS \
-              -o deploy.json \
-              -w "%{http_code}" \
-              -X POST \
-              "$API_BASE/api/v1/DeployIntegrationDesigntimeArtifact?Id=$IFLOW&Version=$VERSION" \
-              -H "Authorization: Bearer $TOKEN")
-
-            echo "Deploy HTTP: $HTTP"
-            cat deploy.json
-
-            if [ "$HTTP" != "200" ]; then
-              echo "Deployment failed."
-              exit 1
-            fi
-
-            echo "Waiting for deployment..."
-
-            for i in {1..30}
-            do
-
-              STATUS=$(curl -s \
-                -H "Authorization: Bearer $TOKEN" \
-                "$API_BASE/api/v1/IntegrationRuntimeArtifacts('$IFLOW')" \
-                | jq -r '.d.Status // empty')
-
-              echo "Attempt $i : $STATUS"
-
-              if [ "$STATUS" = "STARTED" ] || [ "$STATUS" = "DEPLOYED" ]; then
-                echo "Deployment successful."
-                break
-              fi
-
-              sleep 10
-
-            done
+            echo "$RESPONSE"
 
           done < iflows.txt
+
+      ##################################################
+      # Create Transport Request
+      ##################################################
+
+      - name: Create TR
+        shell: bash
+        env:
+          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
+          #NODE: ${{ secrets.CTMS_NODE_NAME_QA }}
+        run: |
+
+          echo "Create Transport Request"
+
+          # Loop all uploaded fileIds
+
+          # POST /v2/nodes/upload
+
+      ##################################################
+      # Wait until deployment completed
+      ##################################################
+
+      - name: Wait for deployment
+        shell: bash
+        run: |
+
+          echo "Polling TR..."
+
+          # GET /transportRequests/{id}
+
+      ##################################################
+      # Archive deployed iFlows
+      ##################################################
+
+      - name: Archive deployed iFlows
+        shell: bash
+        run: |
+
+          mkdir -p ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}
+
+          while read ZIP
+          do
+
+            DIR=$(dirname "$ZIP")
+
+            mv "$DIR" \
+               ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}/
+
+          done < iflows.txt
+
+      ##################################################
+      # Commit archive
+      ##################################################
+
+      - name: Commit archive
+        shell: bash
+        run: |
+
+          git config user.name github-actions
+
+          git config user.email github-actions@github.com
+
+          git add .
+
+          git commit -m "QA Deployment"
+
+          git push
+
+      ##################################################
+      # Tag deployment
+      ##################################################
+
+      - name: Create Tag
+        shell: bash
+        run: |
+
+          TAG=qa-$(date +%Y%m%d-%H%M)
+
+          git tag $TAG
+
+          git push origin $TAG
+
