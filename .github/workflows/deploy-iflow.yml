@@ -73,9 +73,7 @@ jobs:
             echo "Deploying:"
             echo "$ZIP"
 
-		
-      
-      ###########################################################
+
 
       - name: Deploy iFlows
         shell: bash
@@ -142,16 +140,16 @@ jobs:
             mv "$VERSION_DIR" "$TARGET"
 
             cat > "$TARGET/deployment-info.json" <<EOF
-{
-  "iflow":"$IFLOW_NAME",
-  "version":"$VERSION",
-  "environment":"QA",
-  "status":"Ready for PROD",
-  "deploymentTime":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "commit":"${GITHUB_SHA}",
-  "workflowRun":"${GITHUB_RUN_ID}"
-}
-EOF
+				{
+				  "iflow":"$IFLOW_NAME",
+				  "version":"$VERSION",
+				  "environment":"QA",
+				  "status":"Ready for PROD",
+				  "deploymentTime":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+				  "commit":"${GITHUB_SHA}",
+				  "workflowRun":"${GITHUB_RUN_ID}"
+				}
+				EOF
 
             echo "$IFLOW_NAME archived."
 
