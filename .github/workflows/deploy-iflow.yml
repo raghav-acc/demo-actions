@@ -1,203 +1,195 @@
-name: Deploy iFlows to QA
+name: QA Deployment
 
 on:
-  #pull_request:
-  #  branches:
-  #    - develop
-  #  types:
-  #    - closed
-  workflow_dispatch:    
+  pull_request:
+    branches:
+      - develop
+    types:
+      - closed
 
 permissions:
   contents: write
 
 concurrency:
-  group: deploy-qa
+  group: qa-deployment
   cancel-in-progress: false
 
 env:
-  SOURCE_BRANCH: feature
   IFLOW_DIR: btp-iflows
-  ARCHIVE_DIR: archive
-  ARCHIVE_TAG: ReadyForProd
+  ARCHIVE_DIR: archive/qa
+  STATUS_TAG: ReadyForProd
 
 jobs:
-
   deploy-qa:
-    #if: github.event.pull_request.merged == true
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    environment: dev
+    environment: qa
 
     steps:
-      - name: Checkout repository
+
+      - name: Checkout develop
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      ##################################################
-      # Detect merged iFlows
-      ##################################################
+      - name: Show merge information
+        run: |
+          echo "Merged PR: #${{ github.event.pull_request.number }}"
+          echo "Feature Branch : ${{ github.event.pull_request.head.ref }}"
+          echo "Develop Branch : ${{ github.event.pull_request.base.ref }}"
 
-      - name: Find merged iFlows
+      - name: Identify merged iFlows
         id: detect
         shell: bash
         run: |
+          set -e
 
           git diff \
-          ${{ github.event.pull_request.base.sha }} \
-          ${{ github.event.pull_request.merge_commit_sha }} \
-          --name-only \
-          | grep ".zip$" \
-          > iflows.txt
+            ${{ github.event.pull_request.base.sha }} \
+            ${{ github.event.pull_request.merge_commit_sha }} \
+            --name-only \
+            | grep '^btp-iflows/.*\.zip$' \
+            | sort -u > iflows.txt || true
 
-          if [ ! -s iflows.txt ]; then
-            echo "No iFlows found."
+          COUNT=$(wc -l < iflows.txt)
+
+          echo "Found $COUNT iFlow(s)."
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No iFlows to deploy."
             exit 0
           fi
 
           cat iflows.txt
 
-      ##################################################
-      # Get OAuth Token
-      ##################################################
-
-      - name: Get OAuth Token
+      - name: Deploy iFlows to QA
         shell: bash
-        env:
-          TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
         run: |
-          echo "TOKEN_URL length: ${#TOKEN_URL}"
-          echo "CLIENT_ID length: ${#CLIENT_ID}"
-          echo "CLIENT_SECRET length: ${#CLIENT_SECRET}"
-          if [ -z "$TOKEN_URL" ]; then
-          echo "TOKEN_URL is empty"
-          exit 1
-          fi
-          if [ -z "$CLIENT_ID" ]; then
-          echo "CLIENT_ID is empty"
-          exit 1
-          fi
-          if [ -z "$CLIENT_SECRET" ]; then
-          echo "CLIENT_SECRET is empty"
-          exit 1
-          fi
-          TOKEN_URL="${TOKEN_URL%/}"
-          if [[ "$TOKEN_URL" != */oauth/token ]]; then
-          TOKEN_URL="$TOKEN_URL/oauth/token"
-          fi
-          echo "Calling token endpoint..."
-          curl -v \
-          -u "$CLIENT_ID:$CLIENT_SECRET" \
-          -H "Content-Type: application/x-www-form-urlencoded" \
-          -d "grant_type=client_credentials" \
-          "$TOKEN_URL"
-
-
-      ##################################################
-      # Upload ZIP
-      ##################################################
-
-      - name: Upload to CTMS
-        shell: bash
-        env:
-          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-        run: |
-
           while read ZIP
           do
+            [ -z "$ZIP" ] && continue
 
-            echo "Uploading $ZIP"
+            echo "----------------------------------"
+            echo "Deploying:"
+            echo "$ZIP"
 
-            RESPONSE=$(curl -s \
-              -X POST \
-              "$API_URL/v2/files/upload" \
-              -H "Authorization: Bearer $TOKEN" \
-              -F "file=@${ZIP}")
+		
+      
+      ###########################################################
 
-            echo "$RESPONSE"
-
-          done < iflows.txt
-
-      ##################################################
-      # Create Transport Request
-      ##################################################
-
-      - name: Create TR
+      - name: Deploy iFlows
         shell: bash
         env:
-          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-          #NODE: ${{ secrets.CTMS_NODE_NAME_QA }}
+          CPI_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
         run: |
+          while read ZIP
+          do
+            NAME=$(basename "$ZIP")
+            NAME=${NAME%%_*}
+            echo "Deploying $NAME"
+            HTTP=$(curl -s \
+              -o deploy.json \
+              -w "%{http_code}" \
+              -X POST \
+              "$CPI_URL/api/v1/DeployIntegrationDesigntimeArtifact?Id=$NAME&Version=active" \
+              -H "Authorization: Bearer $TOKEN")
+            cat deploy.json
+            if [ "$HTTP" != "200" ]; then
+                echo "Deployment failed"
+                exit 1
+            fi
+            done < iflows.txt
+      ###########################################################
+      # Verify
+      ###########################################################
 
-          echo "Create Transport Request"
-
-          # Loop all uploaded fileIds
-
-          # POST /v2/nodes/upload
-
-      ##################################################
-      # Wait until deployment completed
-      ##################################################
-
-      - name: Wait for deployment
+      - name: Verify Deployment
         shell: bash
+        env:
+          CPI_URL: ${{ secrets.QA_CPI_API_BASE_URL }}
         run: |
+          while read ZIP
+          do
+            NAME=$(basename "$ZIP")
+            NAME=${NAME%%_*}
+            echo "Checking $NAME"
+            curl \
+              -H "Authorization: Bearer $TOKEN" \
+              "$CPI_URL/api/v1/IntegrationRuntimeArtifacts('$NAME')"
+          done < iflows.txt
 
-          echo "Polling TR..."
+            echo "Deployment Successful"
 
-          # GET /transportRequests/{id}
-
-      ##################################################
-      # Archive deployed iFlows
-      ##################################################
+          done < iflows.txt
 
       - name: Archive deployed iFlows
         shell: bash
         run: |
-
-          mkdir -p ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}
+          mkdir -p ${ARCHIVE_DIR}/${STATUS_TAG}
 
           while read ZIP
           do
+            [ -z "$ZIP" ] && continue
 
-            DIR=$(dirname "$ZIP")
+            VERSION_DIR=$(dirname "$ZIP")
+            IFLOW_NAME=$(basename "$(dirname "$VERSION_DIR")")
+            VERSION=$(basename "$VERSION_DIR")
 
-            mv "$DIR" \
-               ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}/
+            TARGET=${ARCHIVE_DIR}/${STATUS_TAG}/${IFLOW_NAME}/${VERSION}
+
+            mkdir -p "$(dirname "$TARGET")"
+
+            mv "$VERSION_DIR" "$TARGET"
+
+            cat > "$TARGET/deployment-info.json" <<EOF
+{
+  "iflow":"$IFLOW_NAME",
+  "version":"$VERSION",
+  "environment":"QA",
+  "status":"Ready for PROD",
+  "deploymentTime":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "commit":"${GITHUB_SHA}",
+  "workflowRun":"${GITHUB_RUN_ID}"
+}
+EOF
+
+            echo "$IFLOW_NAME archived."
 
           done < iflows.txt
 
-      ##################################################
-      # Commit archive
-      ##################################################
-
-      - name: Commit archive
+      - name: Commit archive changes
         shell: bash
         run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
 
-          git config user.name github-actions
+          git add archive btp-iflows
 
-          git config user.email github-actions@github.com
+          if git diff --cached --quiet
+          then
+            echo "Nothing to commit."
+            exit 0
+          fi
 
-          git add .
+          git commit -m "QA Deployment - Ready for PROD"
 
-          git commit -m "QA Deployment"
+          git push origin develop
 
-          git push
-
-      ##################################################
-      # Tag deployment
-      ##################################################
-
-      - name: Create Tag
+      - name: Create QA Tag
         shell: bash
         run: |
+          TAG="qa-ready-for-prod-$(date +%Y%m%d-%H%M%S)"
 
-          TAG=qa-$(date +%Y%m%d-%H%M)
+          git tag -a "$TAG" \
+            -m "Ready for PROD deployment"
 
-          git tag $TAG
+          git push origin "$TAG"
 
-          git push origin $TAG
+          echo "Created tag: $TAG"
 
+      - name: Summary
+        run: |
+          echo "QA Deployment completed successfully."
+          echo "Status: Ready for PROD"
+          echo "Archive Location:"
+          echo "${ARCHIVE_DIR}/${STATUS_TAG}"
