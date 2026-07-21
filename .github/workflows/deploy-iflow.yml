@@ -27,7 +27,7 @@ concurrency:
 
 env:
   SOURCE_BRANCH: develop
-  DOWNLOAD_DIR: btp-iflows
+  DOWNLOAD_DIR: iflow
   ARCHIVE_DIR: btp-iflows-archive
   ARCHIVE_STATUS_TAG: "deployed-to-qa-awaiting-prod"
 
@@ -35,7 +35,7 @@ jobs:
   deploy-to-qa:
     name: Deploy iFlows to QA via CTMS
     runs-on: ubuntu-latest
-    environment: qa
+    #environment: qa
 
     outputs:
       tr_numbers: ${{ steps.deploy.outputs.tr_numbers }}
@@ -86,3 +86,88 @@ jobs:
           #check_secret "CTMS_NODE_NAME_QA" "$CTMS_NODE_NAME_QA"
 
           echo "All CTMS secrets validated."
+
+      - name: Setup Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "Git configured."
+
+      - name: Identify iFlows to deploy
+        id: identify
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "$DOWNLOAD_DIR" ]; then
+            echo "::notice title=Nothing to deploy::No $DOWNLOAD_DIR folder found."
+            echo "SKIP_DEPLOY=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          FORCE_REDEPLOY="${{ github.event.inputs.force_redeploy || 'false' }}"
+
+          if [ "$FORCE_REDEPLOY" = "true" ]; then
+            echo "Force redeploy mode: deploying ALL iFlows in $DOWNLOAD_DIR"
+            find "$DOWNLOAD_DIR" -name "*.zip" | sort > iflows-to-deploy.txt
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "Detecting newly merged iFlow ZIPs since previous commit..."
+            git diff --name-only HEAD^ HEAD -- "$DOWNLOAD_DIR/**/*.zip" 2>/dev/null | \
+              grep -E '\.zip$' | sort -u > iflows-to-deploy.txt || true
+          else
+            echo "Manual trigger without force: deploying ALL iFlows in $DOWNLOAD_DIR"
+            find "$DOWNLOAD_DIR" -name "*.zip" | sort > iflows-to-deploy.txt
+          fi
+
+          DEPLOY_COUNT=$(wc -l < iflows-to-deploy.txt | tr -d ' ')
+
+          echo "iFlows to deploy: $DEPLOY_COUNT"
+
+          if [ "$DEPLOY_COUNT" -eq 0 ]; then
+            echo "::notice title=Nothing to deploy::No new iFlow ZIPs found."
+            echo "SKIP_DEPLOY=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "iFlows:"
+          cat iflows-to-deploy.txt | sed 's/^/   /'
+
+      - name: Get CTMS OAuth token
+        if: env.SKIP_DEPLOY != 'true'
+        shell: bash
+        env:
+          CPI_RUNTIME_TOKEN_URL: ${{ secrets.CPI_RUNTIME_TOKEN_URL }}
+          CPI_RUNTIME_CLIENT_ID: ${{ secrets.CPI_RUNTIME_CLIENT_ID }}
+          CPI_RUNTIME_CLIENT_SECRET: ${{ secrets.CPI_RUNTIME_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          TOKEN_URL="${CPI_RUNTIME_TOKEN_URL%/}"
+          [ "${TOKEN_URL%/oauth/token}" = "$TOKEN_URL" ] && TOKEN_URL="$TOKEN_URL/oauth/token"
+
+          echo "Requesting CTMS OAuth token..."
+
+          RESPONSE=$(curl -sS \
+            -w "\nHTTP_CODE=%{http_code}" \
+            -X POST "$TOKEN_URL" \
+            -u "$CPI_RUNTIME_CLIENT_ID:$CPI_RUNTIME_CLIENT_SECRET" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials")
+
+          HTTP_CODE=$(echo "$RESPONSE" | sed -n 's/^HTTP_CODE=//p')
+          BODY=$(echo "$RESPONSE" | sed '/^HTTP_CODE=/d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "CTMS Token request failed (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            exit 1
+          fi
+
+          TOKEN=$(echo "$BODY" | jq -r '.access_token // empty')
+          [ -z "$TOKEN" ] && { echo "No access_token in response"; exit 1; }
+
+          echo "::add-mask::$TOKEN"
+          echo "CTMS_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "CTMS Token obtained."
