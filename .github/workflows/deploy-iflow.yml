@@ -1,202 +1,88 @@
-name: Deploy iFlows to QA
+name: Deploy iFlows to QA via CTMS
 
 on:
-  #pull_request:
-  #  branches:
-  #    - develop
-  #  types:
-  #    - closed
-  workflow_dispatch:    
+  push:
+    branches:
+      - develop
+    paths:
+      - 'iflow/*.zip'
+
+  workflow_dispatch:
+    inputs:
+      force_redeploy:
+        description: "Force redeploy all iFlows in btp-iflows/"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 permissions:
   contents: write
 
 concurrency:
-  group: deploy-qa
+  group: deploy-to-qa-develop
   cancel-in-progress: false
 
 env:
   SOURCE_BRANCH: develop
-  IFLOW_DIR: btp-iflows
-  ARCHIVE_DIR: archive
-  ARCHIVE_TAG: ReadyForProd
+  DOWNLOAD_DIR: btp-iflows
+  ARCHIVE_DIR: btp-iflows-archive
+  ARCHIVE_STATUS_TAG: "deployed-to-qa-awaiting-prod"
 
 jobs:
-
-  deploy-qa:
-    #if: github.event.pull_request.merged == true
+  deploy-to-qa:
+    name: Deploy iFlows to QA via CTMS
     runs-on: ubuntu-latest
-    environment: dev
+    environment: qa
+
+    outputs:
+      tr_numbers: ${{ steps.deploy.outputs.tr_numbers }}
+      success_count: ${{ steps.deploy.outputs.success_count }}
+      failed_count: ${{ steps.deploy.outputs.failed_count }}
+      deployment_status: ${{ steps.deploy.outputs.deployment_status }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout develop branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ env.SOURCE_BRANCH }}
           fetch-depth: 0
 
-      ##################################################
-      # Detect merged iFlows
-      ##################################################
-
-      - name: Find merged iFlows
-        id: detect
-        shell: bash
-        run: |
-
-          git diff \
-          ${{ github.event.pull_request.base.sha }} \
-          ${{ github.event.pull_request.merge_commit_sha }} \
-          --name-only \
-          | grep ".zip$" \
-          > iflows.txt
-
-          if [ ! -s iflows.txt ]; then
-            echo "No iFlows found."
-            exit 0
-          fi
-
-          cat iflows.txt
-
-      ##################################################
-      # Get OAuth Token
-      ##################################################
-
-      - name: Get OAuth Token
+      - name: Validate CTMS secrets
         shell: bash
         env:
-          TOKEN_URL: ${{ secrets.SAP_BTP_TOKEN_URL }}
-          CLIENT_ID: ${{ secrets.SAP_BTP_OAUTH_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.SAP_BTP_OAUTH_CLIENT_SECRET }}
+          CPI_RUNTIME_TOKEN_URL: ${{ secrets.CPI_RUNTIME_TOKEN_URL }}
+          CPI_RUNTIME_CLIENT_ID: ${{ secrets.CPI_RUNTIME_CLIENT_ID }}
+          CPI_RUNTIME_CLIENT_SECRET: ${{ secrets.CPI_RUNTIME_CLIENT_SECRET }}
+          CPI_DEV_ENDPOINT: ${{ secrets.CPI_DEV_ENDPOINT }}
+          #CTMS_NODE_NAME_QA: ${{ secrets.CTMS_NODE_NAME_QA }}
         run: |
-          echo "TOKEN_URL length: ${#TOKEN_URL}"
-          echo "CLIENT_ID length: ${#CLIENT_ID}"
-          echo "CLIENT_SECRET length: ${#CLIENT_SECRET}"
-          if [ -z "$TOKEN_URL" ]; then
-          echo "TOKEN_URL is empty"
-          exit 1
-          fi
-          if [ -z "$CLIENT_ID" ]; then
-          echo "CLIENT_ID is empty"
-          exit 1
-          fi
-          if [ -z "$CLIENT_SECRET" ]; then
-          echo "CLIENT_SECRET is empty"
-          exit 1
-          fi
-          TOKEN_URL="${TOKEN_URL%/}"
-          if [[ "$TOKEN_URL" != */oauth/token ]]; then
-          TOKEN_URL="$TOKEN_URL/oauth/token"
-          fi
-          echo "Calling token endpoint..."
-          curl -v \
-          -u "$CLIENT_ID:$CLIENT_SECRET" \
-          -H "Content-Type: application/x-www-form-urlencoded" \
-          -d "grant_type=client_credentials" \
-          "$TOKEN_URL"
+          set -euo pipefail
 
+          echo "CTMS Deployment Configuration"
+          echo "Trigger        : ${{ github.event_name }}"
+          echo "Source branch  : $SOURCE_BRANCH"
+          echo "QA Node        : $CTMS_NODE_NAME_QA"
+          echo "Archive dir    : $ARCHIVE_DIR"
 
-      ##################################################
-      # Upload ZIP
-      ##################################################
+          check_secret() {
+            local name="$1" value="$2" prefix="${3:-}"
+            if [ -z "${value:-}" ]; then
+              echo "ERROR: $name is missing or empty."
+              exit 1
+            fi
+            if [ -n "$prefix" ] && [ "${value#$prefix}" = "$value" ]; then
+              echo "ERROR: $name must start with $prefix"
+              exit 1
+            fi
+          }
 
-      - name: Upload to CTMS
-        shell: bash
-        env:
-          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-        run: |
+          check_secret "CPI_RUNTIME_TOKEN_URL" "$CPI_RUNTIME_TOKEN_URL" "https://"
+          check_secret "CPI_RUNTIME_CLIENT_ID" "$CPI_RUNTIME_CLIENT_ID"
+          check_secret "CPI_RUNTIME_CLIENT_SECRET" "$CPI_RUNTIME_CLIENT_SECRET"
+          check_secret "CPI_DEV_ENDPOINT" "$CPI_DEV_ENDPOINT" "https://"
+          check_secret "CTMS_NODE_NAME_QA" "$CTMS_NODE_NAME_QA"
 
-          while read ZIP
-          do
-
-            echo "Uploading $ZIP"
-
-            RESPONSE=$(curl -s \
-              -X POST \
-              "$API_URL/v2/files/upload" \
-              -H "Authorization: Bearer $TOKEN" \
-              -F "file=@${ZIP}")
-
-            echo "$RESPONSE"
-
-          done < iflows.txt
-
-      ##################################################
-      # Create Transport Request
-      ##################################################
-
-      - name: Create TR
-        shell: bash
-        env:
-          API_URL: ${{ secrets.SAP_CPI_API_BASE_URL }}
-          #NODE: ${{ secrets.CTMS_NODE_NAME_QA }}
-        run: |
-
-          echo "Create Transport Request"
-
-          # Loop all uploaded fileIds
-
-          # POST /v2/nodes/upload
-
-      ##################################################
-      # Wait until deployment completed
-      ##################################################
-
-      - name: Wait for deployment
-        shell: bash
-        run: |
-
-          echo "Polling TR..."
-
-          # GET /transportRequests/{id}
-
-      ##################################################
-      # Archive deployed iFlows
-      ##################################################
-
-      - name: Archive deployed iFlows
-        shell: bash
-        run: |
-
-          mkdir -p ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}
-
-          while read ZIP
-          do
-
-            DIR=$(dirname "$ZIP")
-
-            mv "$DIR" \
-               ${ARCHIVE_DIR}/qa/${ARCHIVE_TAG}/
-
-          done < iflows.txt
-
-      ##################################################
-      # Commit archive
-      ##################################################
-
-      - name: Commit archive
-        shell: bash
-        run: |
-
-          git config user.name github-actions
-
-          git config user.email github-actions@github.com
-
-          git add .
-
-          git commit -m "QA Deployment"
-
-          git push
-
-      ##################################################
-      # Tag deployment
-      ##################################################
-
-      - name: Create Tag
-        shell: bash
-        run: |
-
-          TAG=qa-$(date +%Y%m%d-%H%M)
-
-          git tag $TAG
-
-          git push origin $TAG
+          echo "All CTMS secrets validated."
