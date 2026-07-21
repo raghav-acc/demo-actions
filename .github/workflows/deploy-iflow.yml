@@ -5,7 +5,7 @@ on:
     branches:
       - develop
     paths:
-      - 'btp-iflows/**/*.zip'
+      - 'iflow/*.zip'
 
   workflow_dispatch:
     inputs:
@@ -27,8 +27,8 @@ concurrency:
 
 env:
   SOURCE_BRANCH: develop
-  DOWNLOAD_DIR: btp-iflows
-  ARCHIVE_DIR: btp-iflows-archive
+  DOWNLOAD_DIR: iflow
+  ARCHIVE_DIR: iflow-archive
   ARCHIVE_STATUS_TAG: "deployed-to-qa-awaiting-prod"
 
 jobs:
