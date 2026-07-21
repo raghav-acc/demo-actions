@@ -1,11 +1,12 @@
 name: Deploy iFlows to QA
 
 on:
-  pull_request:
-    branches:
-      - develop
-    types:
-      - closed
+  #pull_request:
+  #  branches:
+  #    - develop
+  #  types:
+  #    - closed
+  workflow_dispatch:    
 
 permissions:
   contents: write
