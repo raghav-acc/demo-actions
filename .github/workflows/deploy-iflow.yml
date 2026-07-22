@@ -8,6 +8,15 @@ on:
       - closed
 
   workflow_dispatch:
+    inputs:
+      force_redeploy:
+        description: "Force redeploy all iFlows in btp-iflows/"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 permissions:
   contents: write
