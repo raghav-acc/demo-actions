@@ -21,17 +21,11 @@ env:
   IFLOW_DIR: btp-iflows
 
 jobs:
-
   deploy-to-qa:
-
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
-
     name: Deploy iFlows to QA
-
     runs-on: ubuntu-latest
-
     environment: QA
-
     steps:
 
     - name: Checkout Repository
@@ -41,9 +35,7 @@ jobs:
         fetch-depth: 0
 
     - name: Validate Required Secrets
-
       shell: bash
-
       env:
         CTMS_QA_TOKEN_URL: ${{ secrets.CTMS_QA_TOKEN_URL }}
         CTMS_QA_API_URL: ${{ secrets.CTMS_QA_API_URL }}
@@ -52,11 +44,8 @@ jobs:
         QA_NODE_NAME: ${{ secrets.QA_NODE_NAME }}
 
       run: |
-
         set -e
-
         echo "Validating secrets..."
-
         REQUIRED=(
           CTMS_QA_TOKEN_URL
           CTMS_QA_API_URL
@@ -64,157 +53,93 @@ jobs:
           CTMS_QA_CLIENT_SECRET
           QA_NODE_NAME
         )
-
         for SECRET in "${REQUIRED[@]}"
         do
-
           VALUE="${!SECRET}"
-
           if [ -z "$VALUE" ]; then
              echo "$SECRET is missing."
              exit 1
           fi
-
         done
-
         echo "All required secrets are available."
 
-
-
     - name: Configure Git
-
       run: |
-
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
-
-
     - name: Locate Trigger Files
-
       id: triggerfiles
-
       shell: bash
-
       run: |
-
         set -e
-
         if [ ! -d "$TRIGGER_DIR" ]; then
-
             echo ".qa-triggers folder not found."
-
             echo "SKIP_DEPLOY=true" >> $GITHUB_ENV
-
             exit 0
-
         fi
-
         find "$TRIGGER_DIR" \
              -name "*.txt" \
              | sort > trigger-files.txt
 
         COUNT=$(wc -l < trigger-files.txt)
-
         echo "Trigger Files Found : $COUNT"
-
         if [ "$COUNT" -eq 0 ]; then
-
             echo "No trigger files found."
-
             echo "SKIP_DEPLOY=true" >> $GITHUB_ENV
-
             exit 0
-
         fi
-
         cat trigger-files.txt
-
         echo "TRIGGER_COUNT=$COUNT" >> $GITHUB_ENV
 
     - name: Validate Trigger File Format
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       run: |
-
         set -e
-
         while read FILE
         do
-
             echo "Checking $FILE"
-
             grep "^IFLOW_NAME=" "$FILE" >/dev/null
             grep "^VERSION=" "$FILE" >/dev/null
-
-        done < trigger-files.txt
-
-        echo "All trigger files are valid."
+            done < trigger-files.txt
+			echo "All trigger files are valid."
 
     - name: Build Deployment List
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       run: |
-
         set -e
-
         rm -f deployment-list.txt
-
         while read FILE
         do
-
             source "$FILE"
-
             ZIP="$IFLOW_DIR/$IFLOW_NAME/$VERSION/$IFLOW_NAME.zip"
-
             if [ ! -f "$ZIP" ]; then
-
                 echo "ZIP not found."
-
                 echo "$ZIP"
-
                 exit 1
-
             fi
-
             echo "$IFLOW_NAME|$VERSION|$ZIP" >> deployment-list.txt
+			done < trigger-files.txt
+			echo ""
+			echo "Deployment Queue"
+			cat deployment-list.txt
+			echo ""
+			wc -l deployment-list.txt
+		
 
-        done < trigger-files.txt
-
-        echo ""
-
-        echo "Deployment Queue"
-
-        cat deployment-list.txt
-
-        echo ""
-
-        wc -l deployment-list.txt		
     - name: Get CTMS OAuth Token
-
       if: env.SKIP_DEPLOY != 'true'
-
       id: oauth
-
       shell: bash
-
       env:
         CTMS_QA_TOKEN_URL: ${{ secrets.CTMS_QA_TOKEN_URL }}
         CTMS_QA_CLIENT_ID: ${{ secrets.CTMS_QA_CLIENT_ID }}
         CTMS_QA_CLIENT_SECRET: ${{ secrets.CTMS_QA_CLIENT_SECRET }}
-
       run: |
-
         set -euo pipefail
-
         echo "Requesting OAuth Token..."
-
         RESPONSE=$(curl -sS \
           --request POST \
           "$CTMS_QA_TOKEN_URL" \
@@ -224,49 +149,35 @@ jobs:
 
         TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
 
-        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "Unable to retrieve OAuth token."
-            echo "$RESPONSE"
-            exit 1
-        fi
+			if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+				echo "Unable to retrieve OAuth token."
+				echo "$RESPONSE"
+				exit 1
+			fi
 
-        echo "::add-mask::$TOKEN"
+			echo "::add-mask::$TOKEN"
 
-        echo "CTMS_TOKEN=$TOKEN" >> $GITHUB_ENV
+			echo "CTMS_TOKEN=$TOKEN" >> $GITHUB_ENV
 
-        echo "OAuth token successfully generated."
+			echo "OAuth token successfully generated."
 
 
 
     - name: Initialize Deployment Summary
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       run: |
-
         echo "[]" > deployment-results.json
-
         echo "0" > success-count.txt
-
         echo "0" > failed-count.txt
 
-
-
     - name: Upload iFlows to CTMS
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       env:
         CTMS_QA_API_URL: ${{ secrets.CTMS_QA_API_URL }}
-
       run: |
-
         set -euo pipefail
-
         while IFS="|" read IFLOW VERSION ZIP
         do
 
@@ -285,17 +196,11 @@ jobs:
             --form "file=@${ZIP}")
 
           FILE_ID=$(echo "$RESPONSE" | jq -r '.fileId')
-
           if [ -z "$FILE_ID" ] || [ "$FILE_ID" = "null" ]; then
-
               echo "Upload failed."
-
               echo "$RESPONSE"
-
               FAILED=$(cat failed-count.txt)
-
               echo $((FAILED+1)) > failed-count.txt
-
               jq \
                 --arg iflow "$IFLOW" \
                 --arg version "$VERSION" \
@@ -306,41 +211,24 @@ jobs:
                     status:$status
                 }]' \
                 deployment-results.json > tmp.json
-
               mv tmp.json deployment-results.json
-
               continue
-
           fi
-
           echo "Upload Successful"
-
           echo "$IFLOW|$VERSION|$ZIP|$FILE_ID" >> upload-results.txt
-
-        done < deployment-list.txt
-
-
-
+		  done < deployment-list.txt
     - name: Create Transport Requests
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       env:
         CTMS_QA_API_URL: ${{ secrets.CTMS_QA_API_URL }}
         QA_NODE_NAME: ${{ secrets.QA_NODE_NAME }}
-
       run: |
-
         set -euo pipefail
-
         while IFS="|" read IFLOW VERSION ZIP FILE_ID
         do
-
           echo ""
           echo "Creating TR for $IFLOW"
-
           BODY=$(jq -n \
             --arg NODE "$QA_NODE_NAME" \
             --arg FILE "$FILE_ID" \
@@ -365,17 +253,11 @@ jobs:
             --data "$BODY")
 
           TR_ID=$(echo "$RESPONSE" | jq -r '.transportRequestId // .id')
-
           if [ -z "$TR_ID" ] || [ "$TR_ID" = "null" ]; then
-
               echo "Transport Request creation failed."
-
               echo "$RESPONSE"
-
               FAILED=$(cat failed-count.txt)
-
               echo $((FAILED+1)) > failed-count.txt
-
               jq \
                 --arg iflow "$IFLOW" \
                 --arg version "$VERSION" \
@@ -386,37 +268,24 @@ jobs:
                     status:$status
                 }]' \
                 deployment-results.json > tmp.json
-
               mv tmp.json deployment-results.json
-
               continue
-
           fi
-
           echo "Transport Request : $TR_ID"
-
           echo "$IFLOW|$VERSION|$ZIP|$TR_ID" >> transport-requests.txt
-
-        done < upload-results.txt		
+		  done < upload-results.txt		
     ########################################################################
     # Import Transport Requests into QA
     ########################################################################
 
     - name: Import Transport Requests
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       env:
         CTMS_QA_API_URL: ${{ secrets.CTMS_QA_API_URL }}
-
       run: |
-
         set -euo pipefail
-
         rm -f imported-trs.txt
-
         while IFS="|" read IFLOW VERSION ZIP TR_ID
         do
 
@@ -445,48 +314,30 @@ jobs:
     ########################################################################
 
     - name: Poll Import Status
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       env:
         CTMS_QA_API_URL: ${{ secrets.CTMS_QA_API_URL }}
-
       run: |
-
         set -euo pipefail
-
         while IFS="|" read IFLOW VERSION ZIP TR_ID
         do
-
           echo ""
           echo "Waiting for Transport Request $TR_ID"
-
           STATUS=""
-
           for ATTEMPT in {1..30}
           do
-
               RESPONSE=$(curl -sS \
                 --request GET \
                 "$CTMS_QA_API_URL/v2/transportRequests/$TR_ID" \
                 --header "Authorization: Bearer $CTMS_TOKEN")
-
               STATUS=$(echo "$RESPONSE" | jq -r '.status // .transportStatus // empty')
-
               echo "Attempt $ATTEMPT : $STATUS"
-
               case "$STATUS" in
-
                   SUCCESS|SUCCESSFUL|FINISHED|FINISH|IMPORTED)
-
                       echo "Deployment Successful"
-
                       SUCCESS=$(cat success-count.txt)
-
                       echo $((SUCCESS+1)) > success-count.txt
-
                       jq \
                         --arg iflow "$IFLOW" \
                         --arg version "$VERSION" \
@@ -501,20 +352,14 @@ jobs:
                         deployment-results.json > tmp.json
 
                       mv tmp.json deployment-results.json
-
                       echo "$IFLOW|$VERSION|$ZIP|$TR_ID" >> successful-deployments.txt
-
                       break
                       ;;
 
                   FAILED|FAILURE|ERROR|IMPORT_FAILED)
-
                       echo "Deployment Failed"
-
                       FAILED=$(cat failed-count.txt)
-
                       echo $((FAILED+1)) > failed-count.txt
-
                       jq \
                         --arg iflow "$IFLOW" \
                         --arg version "$VERSION" \
@@ -527,29 +372,20 @@ jobs:
                             status:$status
                         }]' \
                         deployment-results.json > tmp.json
-
                       mv tmp.json deployment-results.json
-
                       break
                       ;;
-
               esac
-
               sleep 10
-
           done
-
           if [ "$STATUS" != "SUCCESS" ] &&
              [ "$STATUS" != "SUCCESSFUL" ] &&
              [ "$STATUS" != "FINISHED" ] &&
              [ "$STATUS" != "IMPORTED" ]; then
 
                 echo "Transport Request timed out."
-
                 FAILED=$(cat failed-count.txt)
-
                 echo $((FAILED+1)) > failed-count.txt
-
                 jq \
                   --arg iflow "$IFLOW" \
                   --arg version "$VERSION" \
@@ -562,25 +398,17 @@ jobs:
                       status:$status
                   }]' \
                   deployment-results.json > tmp.json
-
                 mv tmp.json deployment-results.json
-
           fi
-
         done < imported-trs.txt
 
     ########################################################################
     # Generate Deployment Summary
     ########################################################################
-
     - name: Deployment Summary
-
       if: env.SKIP_DEPLOY != 'true'
-
       shell: bash
-
       run: |
-
         SUCCESS=$(cat success-count.txt)
         FAILED=$(cat failed-count.txt)
 
@@ -593,10 +421,8 @@ jobs:
         echo "========================================="
 
         cat deployment-results.json | jq .
-
         echo "SUCCESS_COUNT=$SUCCESS" >> $GITHUB_ENV
         echo "FAILED_COUNT=$FAILED" >> $GITHUB_ENV
-
         if [ "$SUCCESS" -eq 0 ]; then
             echo "All deployments failed."
             exit 1
@@ -607,37 +433,23 @@ jobs:
     ########################################################################
 
     - name: Archive Trigger Files
-
       if: env.SKIP_DEPLOY != 'true' && env.SUCCESS_COUNT != '0'
-
       shell: bash
-
       run: |
-
         set -euo pipefail
-
         ARCHIVE_DIR="$TRIGGER_DIR/archive/$(date +%Y%m%d)"
-
         mkdir -p "$ARCHIVE_DIR"
-
         if [ ! -f successful-deployments.txt ]; then
           echo "No successful deployments to archive."
           exit 0
         fi
-
         while IFS="|" read IFLOW VERSION ZIP TR_ID
         do
-
           FILE="$TRIGGER_DIR/${IFLOW}.txt"
-
           if [ -f "$FILE" ]; then
-
             mv "$FILE" "$ARCHIVE_DIR/"
-
             echo "Archived $FILE"
-
           fi
-
         done < successful-deployments.txt
 
     ########################################################################
@@ -645,17 +457,11 @@ jobs:
     ########################################################################
 
     - name: Commit Archive Changes
-
       if: env.SKIP_DEPLOY != 'true' && env.SUCCESS_COUNT != '0'
-
       shell: bash
-
       run: |
-
         set -euo pipefail
-
         git add "$TRIGGER_DIR"
-
         if git diff --cached --quiet
         then
             echo "Nothing to commit."
@@ -663,9 +469,7 @@ jobs:
         fi
 
         git commit -m "Archive QA trigger files after CTMS deployment"
-
         git pull --rebase origin develop
-
         git push origin HEAD:develop
 
     ########################################################################
@@ -673,22 +477,14 @@ jobs:
     ########################################################################
 
     - name: Create Deployment Tag
-
       if: env.SKIP_DEPLOY != 'true' && env.SUCCESS_COUNT != '0'
-
       shell: bash
-
       run: |
-
         set -euo pipefail
-
         TAG="qa-deploy-$(date +%Y%m%d-%H%M%S)"
-
         git tag -a "$TAG" \
           -m "QA deployment completed successfully"
-
         git push origin "$TAG"
-
         echo "Created tag $TAG"
 
     ########################################################################
@@ -698,12 +494,9 @@ jobs:
     - name: Upload Deployment Report
 
       if: always()
-
       uses: actions/upload-artifact@v4
-
       with:
         name: deployment-results
-
         path: |
           deployment-results.json
           deployment-list.txt
@@ -711,7 +504,6 @@ jobs:
           transport-requests.txt
           imported-trs.txt
           successful-deployments.txt
-
         retention-days: 30
 
     ########################################################################
@@ -719,13 +511,9 @@ jobs:
     ########################################################################
 
     - name: Publish Deployment Summary
-
       if: always()
-
       shell: bash
-
       run: |
-
         {
           echo "# QA Deployment Summary"
           echo ""
@@ -745,13 +533,9 @@ jobs:
     ########################################################################
 
     - name: Final Validation
-
       if: always()
-
       shell: bash
-
       run: |
-
         echo ""
         echo "====================================="
         echo "QA Deployment Completed"
